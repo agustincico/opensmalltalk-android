@@ -32,3 +32,11 @@ google-services.json
 
 # Android Profiling
 *.hprof
+
+# Smalltalk image files (large binaries, download separately)
+*.image
+*.changes
+*.sources
+
+# macOS
+.DS_Store

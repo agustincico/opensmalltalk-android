@@ -1,0 +1,66 @@
+apply plugin: 'com.android.application'
+
+android {
+    compileSdkVersion 29
+    ndkVersion "22.0.7026061"
+    
+    defaultConfig {
+        applicationId "au.com.darkside.x11server"
+        minSdkVersion 22
+        targetSdkVersion 29
+        versionCode 31
+        versionName "1.31"
+        
+        ndk {
+            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+        }
+        
+        // ¡ESTE BLOQUE EXTERNAL NATIVE BUILD HA SIDO ELIMINADO!
+        // externalNativeBuild {
+        //     cmake {
+        //         cppFlags "-std=c11"
+        //     }
+        // }
+    }
+    
+    signingConfigs {
+        release {
+            storeFile file("android-smalltalk-release.jks")
+            storePassword "AnSmalltalk"
+            keyAlias "androidSmalltalk"
+            keyPassword "AnSmalltalk"
+        }
+    }
+    
+    buildTypes {
+        release {
+            minifyEnabled true
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+            packagingOptions {
+                doNotStrip "**/*/*.so"
+            }
+            signingConfig signingConfigs.release
+        }
+    }
+    
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    
+    externalNativeBuild {
+        cmake {
+            path file('src/main/cpp/CMakeLists.txt')
+            version "3.22.1"  // <--- ESTA LÍNEA ES LA SOLUCIÓN
+        }
+    }
+    
+    packagingOptions {
+        pickFirst 'lib/*/libc++_shared.so'
+    }
+}
+
+dependencies {
+    implementation project(":library")
+    implementation fileTree(dir: "libs", include: ["*.jar"])
+}

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="au.com.darkside.x11server">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
+    <application
+        android:allowBackup="true"
+        android:extractNativeLibs="true"
+        android:hardwareAccelerated="true"
+        android:icon="@drawable/icon"
+        android:label="@string/app_name">
+        <service
+            android:name="au.com.darkside.x11server.XServerService"
+            android:stopWithTask="false" />
+
+        <activity
+            android:name="au.com.darkside.x11server.XServerActivity"
+            android:label="@string/app_name"
+            android:screenOrientation="user"
+            android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection|density"
+            android:theme="@style/Theme.MaterialComponents.Light.DarkActionBar">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:scheme="x11" />
+            </intent-filter>
+        </activity>
+        <activity
+            android:name="au.com.darkside.x11server.AccessControlEditor"
+            android:label="Authorized IP addresses" />
+    </application>
+</manifest>

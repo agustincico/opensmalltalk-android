@@ -1,0 +1,123 @@
+# Author: Daniel Giritzer (giri@nwrk.biz)
+## Workdir
+WORKDIR=$(shell pwd)
+PROJNAME=au.com.darkside.x11server
+LIBNAME=au.com.darkside.xserver
+
+PLATFORM=arm64-v8a # Possible platform: x86, x86_64, armeabi-v7a, arm64-v8a, mips, mips64
+
+# Version Info
+VER_CODE=31
+VER_NAME=1.31
+MIN_SDK=21
+TARGET_SDK=29
+
+# Define potential SDK locations
+SDK_LOCATIONS += ~/Android/Sdk $(ANDROID_HOME) $(HOME)/Library/Android/sdk
+
+# Automatically detect the first existing SDK location
+ANDROID_SDK_ROOT := /opt/homebrew/share/android-commandlinetools
+
+# Ensure the PATH includes the platform-tools directory
+export PATH := $(PATH):$(ANDROID_SDK_ROOT)/platform-tools
+
+## Java/Android Compiler Settings (defaults are valid for debian buster)
+# Can be overridden by environment variables
+JAVA_HOME:=$(if $(JAVA_HOME),$(JAVA_HOME),/usr/lib/jvm/java-1.11.0-openjdk-amd64)
+# ANDROID_SDK_ROOT:=$(if $(ANDROID_SDK_ROOT),$(ANDROID_SDK_ROOT),/usr/lib/android-sdk)
+ANDROID_BUILD_TOOLS_VERSION := 33.0.0
+ANDROID_PLATORM_VERSION := 28
+
+ANDROID_PLATORM := android-28
+
+ANDROID_CP := $(ANDROID_SDK_ROOT)/platforms/$(ANDROID_PLATORM)/android.jar
+
+## Keystore Settings
+ANDROID_KEYSTORE_PATH=debug.keystore
+ANDROID_KEYSTORE_NAME=androiddebugkey
+ANDROID_KEYSTORE_PW=android
+
+## Tools
+ADB=$(ANDROID_SDK_ROOT)/platform-tools/adb
+AAPT := $(ANDROID_SDK_ROOT)/build-tools/$(ANDROID_BUILD_TOOLS_VERSION)/aapt
+DX=$(ANDROID_SDK_ROOT)/build-tools/$(ANDROID_BUILD_TOOLS_VERSION)/d8
+ZIPALIGN := $(ANDROID_SDK_ROOT)/build-tools/$(ANDROID_BUILD_TOOLS_VERSION)/zipalign
+JAVAC=$(JAVA_HOME)/bin/javac
+JARSIGNER=$(JAVA_HOME)/bin/jarsigner
+
+# Android Sources and resources
+ANDROID_SRC=$(WORKDIR)/app/src/main
+ANDROID_LIB=$(WORKDIR)/library/src/main
+ANDROID_SOURCES=$(shell find $(WORKDIR) -name *.java)
+# ANDROID_NATIVE_LIBS=$(shell cd $(ANDROID_SRC) && find ./jniLibs -wholename "./jniLibs/$(PLATFORM)/*.so")
+ANDROID_NATIVE_LIBS=$(shell cd $(ANDROID_SRC) && find ./jniLibs -name *.so)
+ANDROID_NATIVE_LIBS_AAPT_CMD=$(subst ./jniLibs,lib,$(addprefix && $(AAPT) add $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned ,$(ANDROID_NATIVE_LIBS)))
+
+# out
+OUT=$(WORKDIR)/app/build/outputs
+GENDIR_ANDROID=$(OUT)/gen
+CLASSDIR_ANDROID=$(OUT)/class
+CLASS_FILES := $(shell find $(CLASSDIR_ANDROID) -type f -name "*.class")
+NATIVELIBDIR_ANDROID=$(OUT)/lib
+OUT_ANDROID=$(OUT)/apk
+
+all: android_release
+
+.PHONY: export_env
+export_env:
+	if [ -f .env ]; then \
+		export $(shell cat .env | sed 's/#.*//g' | xargs); \
+	fi
+
+android_debug: clean prepare_dirs
+	$(AAPT) package -f -m --debug-mode --version-code $(VER_CODE) --version-name $(VER_NAME) --min-sdk-version $(MIN_SDK) --target-sdk-version $(TARGET_SDK) -J $(GENDIR_ANDROID) --auto-add-overlay -M $(ANDROID_SRC)/AndroidManifest.xml -S $(ANDROID_LIB)/res -S $(ANDROID_SRC)/res -I $(ANDROID_CP)  --extra-packages $(LIBNAME)
+	$(JAVAC) -g -classpath $(ANDROID_CP) -sourcepath 'src:$(GENDIR_ANDROID)' -d '$(CLASSDIR_ANDROID)' -target 1.8 -source 1.8 $(ANDROID_SOURCES)
+	$find $(CLASSDIR_ANDROID) -name "*.class" | xargs $(DX) --lib $(ANDROID_CP) --output $(GENDIR_ANDROID)
+	$(AAPT) package -f --debug-mode --version-code $(VER_CODE) --version-name $(VER_NAME) --min-sdk-version $(MIN_SDK) --target-sdk-version $(TARGET_SDK) -M $(ANDROID_LIB)/AndroidManifest.xml -M $(ANDROID_SRC)/AndroidManifest.xml -S $(ANDROID_LIB)/res -S $(ANDROID_SRC)/res -A $(ANDROID_SRC)/assets -I $(ANDROID_CP) -F $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned
+	cd $(GENDIR_ANDROID) && $(AAPT) add $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned classes.dex
+	cd $(NATIVELIBDIR_ANDROID)/../ $(ANDROID_NATIVE_LIBS_AAPT_CMD)
+	$(JARSIGNER) -keystore $(ANDROID_KEYSTORE_PATH) -storepass '$(ANDROID_KEYSTORE_PW)' $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned  $(ANDROID_KEYSTORE_NAME)
+	$(ZIPALIGN) -f 4 $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned  $(OUT_ANDROID)/$(PROJNAME).apk
+
+android_release: clean prepare_dirs
+	$(AAPT) package -f -m --version-code $(VER_CODE) --version-name $(VER_NAME) --min-sdk-version $(MIN_SDK) --target-sdk-version $(TARGET_SDK) -J $(GENDIR_ANDROID) --auto-add-overlay -M $(ANDROID_SRC)/AndroidManifest.xml -S $(ANDROID_LIB)/res -S $(ANDROID_SRC)/res -I $(ANDROID_CP)  --extra-packages $(LIBNAME)
+	$(JAVAC) -classpath $(ANDROID_CP) -sourcepath 'src:$(GENDIR_ANDROID)' -d '$(CLASSDIR_ANDROID)' -target 1.8 -source 1.8 $(ANDROID_SOURCES)
+	$find $(CLASSDIR_ANDROID) -name "*.class" | xargs $(DX) --lib $(ANDROID_CP) --output $(GENDIR_ANDROID)
+	$(AAPT) package -f --version-code $(VER_CODE) --version-name $(VER_NAME) --min-sdk-version $(MIN_SDK) --target-sdk-version $(TARGET_SDK) -M $(ANDROID_LIB)/AndroidManifest.xml -M $(ANDROID_SRC)/AndroidManifest.xml -S $(ANDROID_LIB)/res -S $(ANDROID_SRC)/res -A $(ANDROID_SRC)/assets -I $(ANDROID_CP) -F $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned
+	cd $(GENDIR_ANDROID) && $(AAPT) add $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned classes.dex
+	cd $(NATIVELIBDIR_ANDROID)/../ $(ANDROID_NATIVE_LIBS_AAPT_CMD)
+	$(JARSIGNER) -keystore $(ANDROID_KEYSTORE_PATH) -storepass '$(ANDROID_KEYSTORE_PW)' $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned  $(ANDROID_KEYSTORE_NAME)
+	$(ZIPALIGN) -f 4 $(GENDIR_ANDROID)/$(PROJNAME).apk.unaligned  $(OUT_ANDROID)/$(PROJNAME).apk
+
+prepare_dirs:
+	mkdir -p $(GENDIR_ANDROID)
+	mkdir -p $(CLASSDIR_ANDROID)
+	mkdir -p $(OUT_ANDROID)
+	mkdir -p $(NATIVELIBDIR_ANDROID)
+	cp -rf $(ANDROID_SRC)/jniLibs/* $(NATIVELIBDIR_ANDROID)
+
+generate_keystore:
+	yes | keytool -genkey -v -keystore $(ANDROID_KEYSTORE_PATH)  -storepass $(ANDROID_KEYSTORE_PW) -alias $(ANDROID_KEYSTORE_NAME) -keypass $(ANDROID_KEYSTORE_PW) -keyalg RSA -keysize 2048 -validity 10000
+
+install:
+	adb install $(OUT_ANDROID)/$(PROJNAME).apk
+
+uninstall:
+	adb uninstall $(PROJNAME)
+
+run:
+	adb shell monkey -p $(PROJNAME) -c android.intent.category.LAUNCHER 1
+
+kill:
+	adb shell am force-stop $(PROJNAME)
+
+remote_screen:
+	 scrcpy --render-driver=software --disable-screensaver --stay-awake &
+
+deploy: android_debug kill install run # uninstall
+
+clean:
+	rm -rf $(GENDIR_ANDROID)
+	rm -rf $(CLASSDIR_ANDROID)
+	rm -rf $(NATIVELIBDIR_ANDROID)
+	rm -rf $(OUT_ANDROID)
