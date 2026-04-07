@@ -50,7 +50,6 @@ To use a different image, replace `app/src/main/assets/Cuis.image` and `.changes
 
 ### Prerequisites
 
-- Android Studio with NDK
 - Android SDK (API 29)
 
 ### Build the APK
