@@ -1,6 +1,6 @@
 # OpenSmalltalk Android
 
-Run any OpenSmalltalk image (Cuis, Squeak, Dialogo, etc) on Android — as a native APK, no Termux required.
+Run any OpenSmalltalk image (Cuis, Squeak) or custom project (like [Dialogo](https://dialog.ar)) on Android — as a native APK, no Termux required.
 
 ![Cuis University running on Samsung Galaxy A12](https://github.com/user-attachments/assets/78cb2c7f-c7a3-423a-a3c9-02b6d1e62064)
 
