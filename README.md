@@ -18,6 +18,7 @@ The app packages two components into a single APK:
 When launched, the app starts the X11 server, then launches the VM pointing to a Smalltalk image. The VM renders via X11 into an Android View.
 
 ### Architecture
+```
 Android App (Java)
 ├── XServerActivity            ← starts X11 server + launches VM
 ├── android-xserver-enhanced   ← X11 server running in-process (library/)
@@ -26,6 +27,7 @@ Native (ARM64)
 ├── libsqueak.so               ← OpenSmalltalk Stack VM
 ├── vm-display-X11.so          ← VM display plugin
 └── ~50 dependency libs        ← resolved from Termux (glib, cairo, pango, X11, etc)
+```
 ### Roadmap
 
 - **v1 (current):** VM via JNI + embedded X11 server
