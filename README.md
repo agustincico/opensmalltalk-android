@@ -65,7 +65,7 @@ The repo is self-contained — both the launcher and the X11 server library are 
 
 ### Recompile the VM (optional)
 
-The compiled VM (`libsqueak.so`) is included in the repo. If you want to recompile it from source on an Android device:
+The compiled VM (`libsqueak.so` and external plugins) is included in the repo. If you want to recompile it from source on an Android device:
 
 1. Install Termux on your Android device
 2. Clone [opensmalltalk-vm](https://github.com/OpenSmalltalk/opensmalltalk-vm)
