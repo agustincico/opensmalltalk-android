@@ -31,7 +31,7 @@ Native (ARM64)
 ### Roadmap
 
 - **v1 (current):** VM via JNI + embedded X11 server
-- **v2 (planned):** Replace X11 stack with a native Android display plugin — eliminating ~50 dependencies and making the APK significantly smaller and more robust
+- **v2 (future):** Replace X11 stack with a native Android display plugin — eliminating ~50 dependencies and making the APK significantly smaller and more robust
 
 ## Requirements
 
