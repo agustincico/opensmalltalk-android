@@ -26,6 +26,7 @@ Android App (Java)
 Native (ARM64)
 ├── libsqueak.so               ← OpenSmalltalk Stack VM
 ├── vm-display-X11.so          ← VM display plugin
+├── *.so                       ← other external plugins
 └── ~50 dependency libs        ← resolved from Termux (glib, cairo, pango, X11, etc)
 ```
 ### Roadmap
