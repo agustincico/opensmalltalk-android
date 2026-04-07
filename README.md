@@ -97,7 +97,7 @@ See: https://github.com/agustincico/android-xserver-enhanced
 - Touch interaction is rough — menus are hard to tap with a finger
 - Fullscreen only applies after rotating the screen once
 
-These will be addressed in the next release.
+These will be addressed in the next release of version 1.
 
 ## License
 
