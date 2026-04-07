@@ -110,4 +110,4 @@ Agustin Martinez
 - [OpenSmalltalk VM](https://github.com/OpenSmalltalk/opensmalltalk-vm)
 - [android-xserver-enhanced](https://github.com/ZhymabekRoman/android-xserver-enhanced) by ZhymabekRoman
 - [Cuis University](https://sites.google.com/view/cuis-university/)
-- Funded by [FAST](https://fast.org.ar) — Fundación Argentina de Smalltalk
+- Funded by [FAST](https://www.fast.org.ar) — Fundación Argentina de Smalltalk
