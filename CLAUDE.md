@@ -121,11 +121,17 @@ macOS **bash 3.2**, so array expansions use the `${arr[@]+"${arr[@]}"}` idiom.
 
 From the README "Known limitations" plus what the loop surfaced:
 
-1. **Fullscreen only after a rotation** — the Cuis world renders in the top band
-   (its saved size); the rest is the gray X root. Likely tied to #2.
-2. **`XDisplayControlPlugin.so` fails to load** (`dlopen … (null)` in logcat) —
-   probably the display resize/fullscreen control. Display itself works via
-   `vm-display-X11.so`.
+1. **~~Fullscreen only after a rotation~~ — DONE** (commit "Fullscreen from
+   startup"). Root cause: at startup `ScreenView.onSizeChanged` fires
+   `notifyClientsScreenResize` *before* the client maps a top-level window, so
+   nothing resizes; no further resize until a rotation. Fix: `ScreenView` polls
+   post-startup until a viewable top-level window exists, then applies the same
+   resize a rotation does — once. Verified: world fills the screen from launch.
+2. **`XDisplayControlPlugin.so` fails to load** (`dlopen … (null)`). Cause found:
+   it's over-linked — `NEEDED` `libSM.so`, `libICE.so`, `libuuid.so`,
+   `libandroid-execinfo.so`, none shipped in `assets/plugins/`. No longer blocks
+   fullscreen (fixed above without it); to actually load it, rebuild the plugin
+   without the X session libs (SM/ICE) or ship those .so's. Low priority.
 3. **Touch/menus hard to hit with a finger** — small hit targets; menu ergonomics.
 4. **No runtime image picker** — the image is embedded in the APK; add in-app
    selection/import instead of rebuilding.
