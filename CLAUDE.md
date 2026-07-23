@@ -132,7 +132,12 @@ From the README "Known limitations" plus what the loop surfaced:
    `libandroid-execinfo.so`, none shipped in `assets/plugins/`. No longer blocks
    fullscreen (fixed above without it); to actually load it, rebuild the plugin
    without the X session libs (SM/ICE) or ship those .so's. Low priority.
-3. **Touch/menus hard to hit with a finger** — small hit targets; menu ergonomics.
+3. **Touch/menus hard to hit with a finger** — *improved:* a **Zoom** menu item
+   (ScreenView `_displayScale`, cycles 1.0/1.5/2.0/2.5) renders the X screen at
+   `physical/scale` and scales up, so widgets are bigger and tappable; touch is
+   mapped physical→logical so hits stay precise. Default 1.0 (native). Possible
+   follow-ups: persist the choice (SharedPreferences) and/or a sensible default;
+   long-press-to-aim precision cursor.
 4. **No runtime image picker** — the image is embedded in the APK; add in-app
    selection/import instead of rebuilding.
 5. **File-write errors depending on storage permissions.**
