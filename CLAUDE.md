@@ -138,8 +138,14 @@ From the README "Known limitations" plus what the loop surfaced:
    mapped physical→logical so hits stay precise. Default 1.0 (native). Possible
    follow-ups: persist the choice (SharedPreferences) and/or a sensible default;
    long-press-to-aim precision cursor.
-4. **No runtime image picker** — the image is embedded in the APK; add in-app
-   selection/import instead of rebuilding.
+4. **~~No runtime image picker~~ — DONE** (commit "Runtime image picker"). A
+   **Load image…** menu item opens the SAF picker (no storage permission), copies
+   the chosen `.image` into filesDir (optionally a `.changes`, Back to skip), sets
+   a `.custom_image` marker so `extractAssets()` won't clobber it, and restarts to
+   boot it. Restart gotcha: `exit(0)` alone makes Android instantly auto-restart
+   the foreground activity and the fresh process races the dying native VM/X
+   server → dies ~6s in. Fix: `_xServer.stop()`, background the app, then relaunch
+   via AlarmManager. Follow-up: pick image+changes as a pair in one step.
 5. **File-write errors depending on storage permissions.**
 
 Non-issues (benign, ignore): `pthread_setschedparam failed: Operation not
