@@ -161,6 +161,47 @@ public class ScreenView extends View {
     private final int _rootId;
     private Window _rootWindow = null;
     private boolean _initialFullscreenApplied = false;  // force the world to fill the screen once, at startup
+
+    // Backlog #3: display zoom. The X screen (root window) is rendered at
+    // physicalSize / _displayScale, then the bitmap is scaled up to fill the
+    // View, so everything Cuis draws is _displayScale× bigger and small targets
+    // (menus, window buttons) are far easier to tap. 1.0 = off (native pixels).
+    private float _displayScale = 1.0f;  // 1.0 = native; user raises it via the Zoom menu item
+
+    /** X-screen (logical) width  = physical view width  / display scale. */
+    public int logicalWidth()  { return Math.max(1, Math.round(getWidth()  / _displayScale)); }
+    /** X-screen (logical) height = physical view height / display scale. */
+    public int logicalHeight() { return Math.max(1, Math.round(getHeight() / _displayScale)); }
+
+    public float getDisplayScale() { return _displayScale; }
+
+    /** Set the zoom factor and re-fit the world to the new logical screen size. */
+    public void setDisplayScale(float scale) {
+        if (scale < 1.0f) scale = 1.0f;
+        if (scale > 4.0f) scale = 4.0f;
+        if (scale == _displayScale) return;
+        _displayScale = scale;
+        try {
+            synchronized (_xServer) {
+                if (_rootWindow != null) {
+                    _rootWindow.resize(logicalWidth(), logicalHeight());
+                    notifyClientsScreenResize(logicalWidth(), logicalHeight());
+                }
+            }
+        } catch (Exception e) {
+            Log.e("ScreenView", "setDisplayScale error: " + e.getMessage(), e);
+        }
+        postInvalidate();
+        Log.i("ScreenView", "displayScale=" + _displayScale + " logical=" + logicalWidth() + "x" + logicalHeight());
+    }
+
+    /** Cycle 1.0 -> 1.5 -> 2.0 -> 2.5 -> 1.0. Returns the new scale. */
+    public float cycleDisplayScale() {
+        float next = _displayScale + 0.5f;
+        if (next > 2.5f) next = 1.0f;
+        setDisplayScale(next);
+        return _displayScale;
+    }
     private Window _sharedClipboardWindow = null;
     private Property _sharedClipboardProperty = null;
     private Property _sharedClipboardPrimaryProperty = null;
@@ -301,7 +342,8 @@ public class ScreenView extends View {
                         return false;
 
                     blank(false); // Reset the screen saver.
-                    updatePointerPosition((int) event.getX(), (int) event.getY(), 0);
+                    // map physical touch -> logical X coords (accounts for display zoom)
+                    updatePointerPosition((int) (event.getX() / _displayScale), (int) (event.getY() / _displayScale), 0);
 
                     if (_enableTouchClicks) {
                         if (event.getActionMasked() == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0)
@@ -744,9 +786,17 @@ public class ScreenView extends View {
             }
 
             _paint.reset();
+            final boolean zoom = _displayScale != 1.0f;
+            if (zoom) {
+                canvas.save();
+                canvas.scale(_displayScale, _displayScale);
+            }
             _rootWindow.draw(canvas, _paint);
+            // cursor is in logical (X) coords; drawn inside the scaled canvas it
+            // lands under the finger at the right physical spot.
             canvas.drawBitmap(_currentCursor.getBitmap(), _currentCursorX - _currentCursor.getHotspotX(),
                     _currentCursorY - _currentCursor.getHotspotY(), null);
+            if (zoom) canvas.restore();
 
             _drawnCursor = _currentCursor;
             _drawnCursorX = _currentCursorX;
@@ -769,20 +819,23 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     
     Log.i("ScreenView", "onSizeChanged: " + oldWidth + "x" + oldHeight + " -> " + width + "x" + height);
     
+    // X-screen size is the physical view size divided by the display zoom.
+    int lw = Math.max(1, Math.round(width / _displayScale));
+    int lh = Math.max(1, Math.round(height / _displayScale));
     if (!_xServer.isStarted()) {
-        initializeXserver(width, height);
+        initializeXserver(lw, lh);
     } else if (_rootWindow != null) {
         // El servidor ya está iniciado, necesitamos redimensionar
         Log.i("ScreenView", "Redimensionando root window y notificando clientes");
-        
+
         synchronized (_xServer) {
             // Redimensionar la ventana root
-            _rootWindow.resize(width, height);
-            
+            _rootWindow.resize(lw, lh);
+
             // Notificar a todos los clientes del cambio de tamaño
-            notifyClientsScreenResize(width, height);
+            notifyClientsScreenResize(lw, lh);
         }
-        
+
         // Forzar redibujado
         postInvalidate();
     }
@@ -1284,10 +1337,10 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
         io.writeInt(_defaultColormap.getWhitePixel()); // White pixel.
         io.writeInt(_defaultColormap.getBlackPixel()); // Black pixel.
         io.writeInt(0); // Current input masks.
-        io.writeShort((short) getWidth()); // Width in pixels.
-        io.writeShort((short) getHeight()); // Height in pixels.
-        io.writeShort((short) (getWidth() / _pixelsPerMillimeter)); // Width in millimeters.
-        io.writeShort((short) (getHeight() / _pixelsPerMillimeter)); // Height in millimeters.
+        io.writeShort((short) logicalWidth()); // Width in pixels (logical / zoomed).
+        io.writeShort((short) logicalHeight()); // Height in pixels (logical / zoomed).
+        io.writeShort((short) (logicalWidth() / _pixelsPerMillimeter)); // Width in millimeters.
+        io.writeShort((short) (logicalHeight() / _pixelsPerMillimeter)); // Height in millimeters.
         io.writeShort((short) 1); // Minimum installed maps.
         io.writeShort((short) 1); // Maximum installed maps.
         io.writeInt(vis.getId()); // Root visual ID.
@@ -2121,9 +2174,9 @@ private void scheduleInitialFullscreen(final int attempt) {
                     public void run() {
                         try {
                             synchronized (_xServer) {
-                                notifyClientsScreenResize(getWidth(), getHeight());
+                                notifyClientsScreenResize(logicalWidth(), logicalHeight());
                             }
-                            Log.i("ScreenView", "Initial fullscreen applied (" + getWidth() + "x" + getHeight() + ")");
+                            Log.i("ScreenView", "Initial fullscreen applied (" + logicalWidth() + "x" + logicalHeight() + ")");
                         } catch (Exception e) {
                             Log.e("ScreenView", "Initial fullscreen apply error: " + e.getMessage(), e);
                         }

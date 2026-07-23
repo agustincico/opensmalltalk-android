@@ -93,6 +93,7 @@ public class XServerActivity extends Activity {
     private static final int MENU_TOGGLE_WINDOWMANAGER = 8;
     private static final int MENU_TOGGLE_ORIENTATION = 9;
     private static final int MENU_TOGGLE_SHARED_CLIPBOARD = 10;
+    private static final int MENU_ZOOM = 11;
     private static final int ACTIVITY_ACCESS_CONTROL = 1;
 
     private static final int DEFAULT_PORT = 6000;
@@ -305,6 +306,8 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         item = menu.add(0, MENU_TOGGLE_SHARED_CLIPBOARD, 0, "Shared Clipboard (on)");
         item.setIcon(android.R.drawable.star_on);
 
+        item = menu.add(0, MENU_ZOOM, 0, "Zoom (1.0x)");
+
         item = menu.add(0, MENU_TOGGLE_ORIENTATION, 0, "Screen Orientation (H)");
 
         return true;
@@ -357,6 +360,12 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     item.setTitle("Inhibit back button (off)");
                 }
                 return true;
+            case MENU_ZOOM: {
+                float s = _xServer.getScreen().cycleDisplayScale();
+                item.setTitle("Zoom (" + s + "x)");
+                item.setIcon(s > 1.0f ? android.R.drawable.star_on : android.R.drawable.star_off);
+                return true;
+            }
             case MENU_TOGGLE_TOUCHCLICKS:
                 if (_xServer.getScreen().toggleEnableTouchClicks()) {
                     item.setIcon(android.R.drawable.star_on);
