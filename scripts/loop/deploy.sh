@@ -39,7 +39,8 @@ stop()   { "$ADB" shell am force-stop "$PKG" >/dev/null 2>&1 || true; }
 img_asset="$REPO_ROOT/app/src/main/assets/$IMAGE_NAME"
 want_img=0; [ -f "$img_asset" ] && want_img="$(wc -c < "$img_asset" | tr -d ' ')"
 
-dev_size() { "$ADB" shell run-as "$PKG" stat -c %s "files/$1" 2>/dev/null | tr -d '\r'; }
+# Never let a missing file / failing stat abort the script (set -e + pipefail):
+dev_size() { "$ADB" shell run-as "$PKG" stat -c %s "files/$1" 2>/dev/null | tr -d '\r' || true; }
 
 loop_log "launch #1 (triggers asset extraction on fresh installs)"
 stop; launch
@@ -70,7 +71,7 @@ for _ in $(seq 1 30); do
     loop_err "VM could not open the image — check logcat"; break
   fi
   if "$ADB" logcat -d -s SQUEAK 2>/dev/null | grep -q 'g_squeak_main'; then opened=1; fi
-  pid="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
+  pid="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' || true)"
   [ "$opened" = 1 ] && [ -n "$pid" ] && break
   sleep 1
 done

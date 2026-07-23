@@ -39,7 +39,7 @@ case "$fmt" in
 esac
 
 loop_adb_root
-uidname="$("$ADB" shell stat -c %U "$FILES_DIR" 2>/dev/null | tr -d '\r')"
+uidname="$("$ADB" shell stat -c %U "$FILES_DIR" 2>/dev/null | tr -d '\r' || true)"
 [ -n "$uidname" ] || { loop_err "cannot stat $FILES_DIR — is the app installed?"; exit 1; }
 
 push_one() {  # src destname

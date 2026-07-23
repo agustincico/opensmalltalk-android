@@ -49,7 +49,7 @@ fi
 argv_ok=$(grep -qE 'argv\[5\]:.*\.image' "$LOG" && echo yes || echo no)
 img_fail=$(grep -qiE 'could not open the squeak image' "$LOG" && echo YES || echo no)
 crash=$(grep -qiE 'beginning of crash|FATAL EXCEPTION|SIGSEGV|signal 11' "$LOG" && echo YES || echo no)
-pid="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
+pid="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' || true)"
 sz=$(wc -c < "$PNG" | tr -d ' ')
 
 loop_log "screen -> $PNG (${sz} bytes)   logs -> $LOG (${LINES} lines)"
