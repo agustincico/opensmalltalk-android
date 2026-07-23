@@ -40,3 +40,6 @@ google-services.json
 
 # macOS
 .DS_Store
+
+# Dev loop artifacts (screenshots, logs, emulator/scrcpy logs)
+.loop/

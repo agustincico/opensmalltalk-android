@@ -91,17 +91,29 @@ void* run_squeak_thread(void* arg) {
     }
     // --- Fin de Redirección ---
 
-    // Argumentos de la VM: Ejecutable -plugins <ruta_plugins> <ruta_imagen>
-    char *argv[] = {
-        (char*)"squeak",
-        (char*)"-plugins",
-        plugins_path,
-        (char*)"-display",      // ← AGREGAR
-        (char*)"127.0.0.1:0",            // ← AGREGAR
-        g_image_path,
-        NULL
-    };
-    int argc = 6;  // ← CAMBIAR a 6
+    // Argumentos de la VM: squeak -plugins <ruta_plugins> -display <disp> <ruta_imagen>
+    // Hook de tests de dev (opcional): si existe <filesDir>/dev-tests.st se agrega
+    //   -s <filesDir>/dev-tests.st  para que la imagen (Cuis 6.x) lo evalúe al arrancar
+    //   e imprima resultados por stdout (-> logcat). En producción (sin ese
+    //   archivo) el argv queda idéntico al original de 6 elementos.
+    static char dev_st_path[600];
+    snprintf(dev_st_path, sizeof(dev_st_path), "%s/dev-tests.st", g_files_dir);
+    int have_dev_st = (access(dev_st_path, R_OK) == 0);
+
+    char *argv[9];
+    int argc = 0;
+    argv[argc++] = (char*)"squeak";
+    argv[argc++] = (char*)"-plugins";
+    argv[argc++] = plugins_path;
+    argv[argc++] = (char*)"-display";
+    argv[argc++] = (char*)"127.0.0.1:0";
+    argv[argc++] = g_image_path;
+    if (have_dev_st) {
+        argv[argc++] = (char*)"-s";
+        argv[argc++] = dev_st_path;
+        LOG("dev-tests.st encontrado; agregando: -s %s", dev_st_path);
+    }
+    argv[argc] = NULL;
 
     // === INICIO DEL LOGUEO DEL ARREGLO argv ===
     LOG("Argumentos de la VM (argc: %d):", argc);
