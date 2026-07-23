@@ -160,6 +160,7 @@ public class ScreenView extends View {
     private final XServer _xServer;
     private final int _rootId;
     private Window _rootWindow = null;
+    private boolean _initialFullscreenApplied = false;  // force the world to fill the screen once, at startup
     private Window _sharedClipboardWindow = null;
     private Property _sharedClipboardProperty = null;
     private Property _sharedClipboardPrimaryProperty = null;
@@ -785,6 +786,11 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
         // Forzar redibujado
         postInvalidate();
     }
+
+    // Backlog #1: the world otherwise renders at its saved (smaller) size until
+    // the first device rotation. Once a client has mapped its top-level window,
+    // apply the same resize a rotation would — once — so it's fullscreen from start.
+    ensureInitialFullscreen();
 }
 
     protected void initializeXserver(int width, int height) {
@@ -2075,5 +2081,58 @@ private void notifyClientsScreenResize(int width, int height) {
     } catch (Exception e) {
         Log.e("ScreenView", "Error notificando resize: " + e.getMessage(), e);
     }
+}
+
+/**
+ * Once, at startup: poll until a client has mapped a viewable top-level window,
+ * then (after a short settle) resize it to fill the screen — the same thing a
+ * device rotation does via notifyClientsScreenResize. Fixes "fullscreen only
+ * applies after rotating once". No-op if already applied.
+ */
+private void ensureInitialFullscreen() {
+    if (_initialFullscreenApplied) return;
+    scheduleInitialFullscreen(0);
+}
+
+private void scheduleInitialFullscreen(final int attempt) {
+    if (_initialFullscreenApplied || attempt > 80) return;  // ~80 * 250ms = 20s ceiling
+    postDelayed(new Runnable() {
+        @Override
+        public void run() {
+            if (_initialFullscreenApplied) return;
+            boolean hasClient = false;
+            try {
+                if (_xServer != null && _xServer.isStarted() && _rootWindow != null) {
+                    Vector<Window> children = _rootWindow.getChildren();
+                    if (children != null) {
+                        for (Window child : children) {
+                            if (child != null && child.isViewable()) { hasClient = true; break; }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.e("ScreenView", "scheduleInitialFullscreen check error: " + e.getMessage(), e);
+            }
+            if (hasClient) {
+                _initialFullscreenApplied = true;
+                // let the client finish its own startup layout, then force fullscreen once
+                postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            synchronized (_xServer) {
+                                notifyClientsScreenResize(getWidth(), getHeight());
+                            }
+                            Log.i("ScreenView", "Initial fullscreen applied (" + getWidth() + "x" + getHeight() + ")");
+                        } catch (Exception e) {
+                            Log.e("ScreenView", "Initial fullscreen apply error: " + e.getMessage(), e);
+                        }
+                    }
+                }, 800);
+            } else {
+                scheduleInitialFullscreen(attempt + 1);
+            }
+        }
+    }, 250);
 }
 }
