@@ -6,6 +6,7 @@ import android.app.Dialog;
 import android.app.Service;
 import android.app.NotificationManager;
 import android.app.Notification;
+import android.app.AlarmManager;
 import android.app.PendingIntent;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
@@ -94,7 +95,10 @@ public class XServerActivity extends Activity {
     private static final int MENU_TOGGLE_ORIENTATION = 9;
     private static final int MENU_TOGGLE_SHARED_CLIPBOARD = 10;
     private static final int MENU_ZOOM = 11;
+    private static final int MENU_LOAD_IMAGE = 12;
     private static final int ACTIVITY_ACCESS_CONTROL = 1;
+    private static final int ACTIVITY_LOAD_IMAGE = 2;
+    private static final int ACTIVITY_LOAD_CHANGES = 3;
 
     private static final int DEFAULT_PORT = 6000;
     private static final String PORT_DESC_PRE = "Listening on port ";
@@ -306,6 +310,8 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         item = menu.add(0, MENU_TOGGLE_SHARED_CLIPBOARD, 0, "Shared Clipboard (on)");
         item.setIcon(android.R.drawable.star_on);
 
+        item = menu.add(0, MENU_LOAD_IMAGE, 0, "Load image…");
+
         item = menu.add(0, MENU_ZOOM, 0, "Zoom (1.0x)");
 
         item = menu.add(0, MENU_TOGGLE_ORIENTATION, 0, "Screen Orientation (H)");
@@ -359,6 +365,9 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     item.setIcon(android.R.drawable.star_off);
                     item.setTitle("Inhibit back button (off)");
                 }
+                return true;
+            case MENU_LOAD_IMAGE:
+                launchImagePicker();
                 return true;
             case MENU_ZOOM: {
                 float s = _xServer.getScreen().cycleDisplayScale();
@@ -491,7 +500,39 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      */
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        if (requestCode == ACTIVITY_ACCESS_CONTROL && resultCode == RESULT_OK) setAccessControl();
+        if (requestCode == ACTIVITY_ACCESS_CONTROL && resultCode == RESULT_OK) {
+            setAccessControl();
+            return;
+        }
+        if (requestCode == ACTIVITY_LOAD_IMAGE) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                if (copyUriToFile(data.getData(), new File(getFilesDir(), "Cuis.image"))) {
+                    // Mark so extractAssets() never overwrites this custom image / changes.
+                    try { new File(getFilesDir(), ".custom_image").createNewFile(); }
+                    catch (IOException e) { Log.e(TAG, "could not write .custom_image marker", e); }
+                    Toast.makeText(this, "Image loaded. Now pick its .changes, or press Back to skip.",
+                            Toast.LENGTH_LONG).show();
+                    launchChangesPicker();
+                } else {
+                    Toast.makeText(this, "Could not read the selected image.", Toast.LENGTH_LONG).show();
+                }
+            }
+            return;
+        }
+        if (requestCode == ACTIVITY_LOAD_CHANGES) {
+            File changes = new File(getFilesDir(), "Cuis.changes");
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                copyUriToFile(data.getData(), changes);
+            } else {
+                // Skipped: boot with NO changes file. An empty/mismatched .changes
+                // makes Cuis crash a few seconds in when it first appends a change;
+                // no changes at all is stable. (The .custom_image marker stops
+                // extractAssets() from re-creating the bundled one.)
+                if (changes.exists()) changes.delete();
+            }
+            restartApp(); // re-init the native VM against the newly loaded image
+            return;
+        }
     }
 
     /**
@@ -501,6 +542,80 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         Intent intent = new Intent(this, AccessControlEditor.class);
 
         startActivityForResult(intent, ACTIVITY_ACCESS_CONTROL);
+    }
+
+    /** Let the user pick a Smalltalk .image from device storage (SAF — no permission needed). */
+    private void launchImagePicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*"); // .image has no registered MIME type
+        try {
+            startActivityForResult(i, ACTIVITY_LOAD_IMAGE);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "No file picker available.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void launchChangesPicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*");
+        try {
+            startActivityForResult(i, ACTIVITY_LOAD_CHANGES);
+        } catch (ActivityNotFoundException e) {
+            restartApp();
+        }
+    }
+
+    /** Copy a content Uri's bytes into a file in filesDir. */
+    private boolean copyUriToFile(Uri uri, File dst) {
+        try (InputStream in = getContentResolver().openInputStream(uri);
+             FileOutputStream out = new FileOutputStream(dst)) {
+            if (in == null) return false;
+            byte[] buf = new byte[65536];
+            int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+            Log.i(TAG, "Copied " + uri + " -> " + dst.getAbsolutePath() + " (" + dst.length() + " bytes)");
+            return true;
+        } catch (Exception e) {
+            Log.e(TAG, "copyUriToFile failed", e);
+            return false;
+        }
+    }
+
+    /**
+     * Restart the process so the native VM re-initialises with the new image.
+     * The relaunch is scheduled ~600ms out via AlarmManager so the current
+     * process (and its X server socket on 127.0.0.1:0) is fully torn down before
+     * the new VM starts — otherwise the two race and the fresh boot dies.
+     */
+    private void restartApp() {
+        // Close the X server socket (127.0.0.1:6000) cleanly first — otherwise the
+        // dying process still holds the port and the freshly restarted VM's X
+        // server can't serve, and the new process dies a few seconds in.
+        try { if (_xServer != null) _xServer.stop(); } catch (Exception e) { Log.e(TAG, "xserver stop", e); }
+
+        Intent restart = new Intent(this, XServerActivity.class);
+        restart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
+        PendingIntent pi = PendingIntent.getActivity(this, 0, restart, flags);
+        AlarmManager mgr = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
+        if (mgr == null) { startActivity(restart); Runtime.getRuntime().exit(0); return; }
+
+        // Relaunch ~1.3s out, after this process is fully gone.
+        mgr.set(AlarmManager.RTC, System.currentTimeMillis() + 1300, pi);
+
+        // Send the app to the background FIRST. If we die while still the foreground
+        // activity, Android instantly auto-restarts us, and that fresh process —
+        // racing the dying native VM / X server — itself dies ~6s in. Backgrounded,
+        // Android doesn't auto-restart, so only our alarm brings it back, cleanly.
+        Intent home = new Intent(Intent.ACTION_MAIN);
+        home.addCategory(Intent.CATEGORY_HOME);
+        home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        startActivity(home);
+        new android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed(() -> Runtime.getRuntime().exit(0), 400);
     }
 
     /**
@@ -638,10 +753,16 @@ private void extractAssets() {
             String[] files = getAssets().list(""); // lista la raíz de assets
             if (files == null) return;
 
+            boolean customImage = new File(getFilesDir(), ".custom_image").exists();
             for (String filename : files) {
                 // saltear directorios (plugins ya lo maneja extractPlugins)
                 String[] sub = getAssets().list(filename);
                 if (sub != null && sub.length > 0) continue; // es directorio
+
+                // Once the user loaded a custom image via "Load image…", never
+                // overwrite it (or wrongly re-create its .changes) from the APK.
+                if (customImage && (filename.equals("Cuis.image") || filename.equals("Cuis.changes")))
+                    continue;
 
                 File destFile = new File(getFilesDir(), filename);
                 if (destFile.exists()) {
