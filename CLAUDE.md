@@ -172,7 +172,16 @@ From the README "Known limitations" plus what the loop surfaced:
    (keyboard) buttons sat over the world; now they collapse to a minimal `‹` handle
    in the bottom-right corner that slides them out on tap. Doubles as an **escape
    hatch** from a blank-rendering image (☰ → *Load image…* still works).
-6. **File-write errors depending on storage permissions.**
+6. **Save Image works (to filesDir).** Tested on Cuis 7.5: World menu → *Save
+   Image* writes `filesDir/Cuis.image` (size/mtime change, Transcript logs
+   `----SNAPSHOT----`, no permission error) and the saved state boots on relaunch.
+   *Save Image as…* pops a "New file name?" dialog defaulting to `Cuis.image`
+   (also filesDir). So the old "file-write errors depending on storage
+   permissions" does NOT reproduce here — the image lives in the app's private,
+   writable filesDir. **Remaining gap:** that dir is private, so the user can't
+   back up / transfer the `.image` off the phone, and *Save Image as…* under a
+   different name won't be re-booted (the app only boots `Cuis.image`). A future
+   **"Export image"** (share-sheet / copy to Downloads via SAF) would cover that.
 
 Non-issues (benign, ignore): `pthread_setschedparam failed: Operation not
 permitted` (VM can't get realtime prio; falls back to itimer) and
