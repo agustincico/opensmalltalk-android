@@ -138,14 +138,28 @@ From the README "Known limitations" plus what the loop surfaced:
    mapped physical→logical so hits stay precise. Default 1.0 (native). Possible
    follow-ups: persist the choice (SharedPreferences) and/or a sensible default;
    long-press-to-aim precision cursor.
-4. **~~No runtime image picker~~ — DONE** (commit "Runtime image picker"). A
-   **Load image…** menu item opens the SAF picker (no storage permission), copies
-   the chosen `.image` into filesDir (optionally a `.changes`, Back to skip), sets
-   a `.custom_image` marker so `extractAssets()` won't clobber it, and restarts to
-   boot it. Restart gotcha: `exit(0)` alone makes Android instantly auto-restart
-   the foreground activity and the fresh process races the dying native VM/X
-   server → dies ~6s in. Fix: `_xServer.stop()`, background the app, then relaunch
-   via AlarmManager. Follow-up: pick image+changes as a pair in one step.
+4. **~~No runtime image picker~~ — DONE**, extended into a **startup chooser**.
+   With no image chosen yet (no `.custom_image` marker) the app shows a **Load
+   image** dialog on launch instead of auto-booting the bundled Cuis: *Latest
+   Squeak (download)*, *Latest Cuis (download)*, *From device…* (SAF, no storage
+   permission), *Bundled Cuis (offline)*. The same dialog is reachable any time
+   from the ☰ menu → *Load image…*. Picking one copies the `.image` (+ its sibling
+   `<name>.changes`, auto-assumed for device picks) into filesDir, sets the
+   `.custom_image` marker (so `extractAssets()` never clobbers it), and restarts
+   to boot it.
+   **Restart (the "elijo Cuis y se cierra" bug) — the recipe changed.** The old
+   `exit(0)`-races-auto-restart / go-HOME-+-AlarmManager approach is **blocked on
+   Android 10+**: a backgrounded app can't start an activity (`Background activity
+   start … isBgStartWhitelisted: false`), so the relaunch never fired. Fixed with
+   the **ProcessPhoenix** technique — `RestartActivity` in its own `:restart`
+   process (manifest `android:process=":restart"`), started while we're still
+   foreground; it kills the old app process, waits ~500ms for the OS to free the X
+   port (6000), then starts `XServerActivity` fresh (a foreground start, allowed)
+   and finishes after a short delay (killing our own process immediately would
+   cancel the pending launch). See `RestartActivity` + `XServerActivity.restartApp`.
+   Caveat: *Latest Cuis* downloads **Cuis 7.9-8090**, which renders a white/gray
+   unresponsive world (bleeding-edge Cuis compat, not the restart); 7.5 / Squeak
+   6.0 / bundled Cuis render fine.
 5. **File-write errors depending on storage permissions.**
 
 Non-issues (benign, ignore): `pthread_setschedparam failed: Operation not
