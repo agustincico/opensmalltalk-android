@@ -46,6 +46,7 @@ import java.lang.reflect.Constructor;
 import android.util.Log;
 
 import java.io.FileOutputStream;
+import java.io.RandomAccessFile;
 import android.content.res.AssetManager;
 
 import java.io.IOException;
@@ -163,6 +164,11 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 Log.i(TAG, "libPath=" + libPath);
                 Log.i(TAG, "imagePath=" + imagePath);
                 Log.i(TAG, "pluginsPath=" + pluginsPath);
+
+                // Drop any trailing "lost changes" (a dangling ----STARTUP---- that
+                // Cuis wrote last boot and Android killed before a clean quit) so the
+                // image doesn't pop the "Last changes may have been lost" dialog.
+                pruneChangesFile();
 
                 int res = startVMNative(libPath, imagePath, pluginsPath);
                 Log.i(TAG, "startVMNative() retornó: " + res);
@@ -312,7 +318,9 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 
         item = menu.add(0, MENU_LOAD_IMAGE, 0, "Load image…");
 
-        item = menu.add(0, MENU_ZOOM, 0, "Zoom (1.0x)");
+        float zoom = 1.0f;
+        try { zoom = _xServer.getScreen().getDisplayScale(); } catch (Exception e) { }
+        item = menu.add(0, MENU_ZOOM, 0, "Zoom (" + zoom + "x)");
 
         item = menu.add(0, MENU_TOGGLE_ORIENTATION, 0, "Screen Orientation (H)");
 
@@ -792,5 +800,42 @@ private void extractAssets() {
 
     private void appendLog(final String msg) {
         Log.i("CuisApp", "APP-LOG: " + msg); // ✅ FORZAR LOG
+    }
+
+    /**
+     * Truncate Cuis.changes to just after the last ----SNAPSHOT----/----QUIT----/
+     * ----QUIT/NOSAVE---- record, dropping any trailing content. On Android the app
+     * is killed (not cleanly quit), so Cuis leaves a dangling ----STARTUP---- at the
+     * end of the changes file; on the next boot that reads as "lost changes" and pops
+     * a modal dialog. Removing the tail makes Smalltalk>>hasToRestoreChanges false
+     * (equivalent to choosing "Nothing"), while keeping all history up to the last
+     * snapshot/quit. No-op when there's no changes file. Runs before every VM launch.
+     */
+    private void pruneChangesFile() {
+        File changes = new File(getFilesDir(), "Cuis.changes");
+        if (!changes.exists() || changes.length() < 64) return;
+        RandomAccessFile raf = null;
+        try {
+            long len = changes.length();
+            int scan = (int) Math.min(len, 2L * 1024 * 1024); // markers live at the tail
+            byte[] buf = new byte[scan];
+            raf = new RandomAccessFile(changes, "rw");
+            raf.seek(len - scan);
+            raf.readFully(buf);
+            String tail = new String(buf, "ISO-8859-1"); // 1 byte == 1 char, offsets match
+            int marker = Math.max(tail.lastIndexOf("----SNAPSHOT"), tail.lastIndexOf("----QUIT"));
+            if (marker < 0) return; // no marker in the tail — leave the file untouched
+            int bang = tail.indexOf('!', marker); // chunk terminator of that record
+            if (bang < 0) return;
+            long cut = (len - scan) + bang + 1;
+            if (cut < len) {
+                raf.setLength(cut);
+                Log.i(TAG, "pruneChangesFile: " + len + " -> " + cut + " (dropped trailing lost changes)");
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "pruneChangesFile failed", e);
+        } finally {
+            if (raf != null) try { raf.close(); } catch (IOException e) { }
+        }
     }
 }
