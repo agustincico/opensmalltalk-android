@@ -26,12 +26,19 @@ import android.view.inputmethod.InputMethodManager;
 import android.widget.FrameLayout;
 import android.widget.Toast;
 
+import android.app.ProgressDialog;
+import java.net.HttpURLConnection;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
+import java.net.URL;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 import au.com.darkside.xserver.ScreenView;
 import au.com.darkside.xserver.XServer;
@@ -375,7 +382,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 }
                 return true;
             case MENU_LOAD_IMAGE:
-                launchImagePicker();
+                showLoadImageDialog();
                 return true;
             case MENU_ZOOM: {
                 float s = _xServer.getScreen().cycleDisplayScale();
@@ -550,6 +557,159 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         Intent intent = new Intent(this, AccessControlEditor.class);
 
         startActivityForResult(intent, ACTIVITY_ACCESS_CONTROL);
+    }
+
+    /** "Load image…" → choose: download the latest Squeak or Cuis, or browse the device. */
+    private void showLoadImageDialog() {
+        final String[] options = { "Latest Squeak (download)", "Latest Cuis (download)", "From device…" };
+        new AlertDialog.Builder(this)
+                .setTitle("Load image")
+                .setItems(options, (dialog, which) -> {
+                    if (which == 0) downloadAndLoad("Squeak");
+                    else if (which == 1) downloadAndLoad("Cuis");
+                    else launchImagePicker();
+                })
+                .setNegativeButton("Cancel", null)
+                .show();
+    }
+
+    /** Download the latest Squeak/Cuis image into filesDir on a background thread, then restart. */
+    private void downloadAndLoad(final String flavor) {
+        final ProgressDialog pd = new ProgressDialog(this);
+        pd.setTitle("Downloading latest " + flavor);
+        pd.setMessage("Contacting server…");
+        pd.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
+        pd.setIndeterminate(true);
+        pd.setCancelable(false);
+        pd.setMax(100);
+        pd.show();
+        new Thread(() -> {
+            try {
+                if (flavor.equals("Squeak")) downloadSqueak(pd); else downloadCuis(pd);
+                // keep the download from being clobbered by the bundled default next boot
+                new File(getFilesDir(), ".custom_image").createNewFile();
+                runOnUiThread(() -> {
+                    pd.dismiss();
+                    Toast.makeText(this, flavor + " loaded — restarting.", Toast.LENGTH_SHORT).show();
+                    restartApp();
+                });
+            } catch (Exception e) {
+                Log.e(TAG, "download failed", e);
+                final String msg = e.getMessage();
+                runOnUiThread(() -> {
+                    pd.dismiss();
+                    Toast.makeText(this, "Download failed: " + msg, Toast.LENGTH_LONG).show();
+                });
+            }
+        }).start();
+    }
+
+    private void downloadSqueak(ProgressDialog pd) throws Exception {
+        setProgressMsg(pd, "Finding latest build…");
+        String listing = httpGetString("https://files.squeak.org/6.0/");
+        Matcher m = Pattern.compile("Squeak6\\.0-(\\d+)-64bit").matcher(listing);
+        int best = -1;
+        while (m.find()) { int b = Integer.parseInt(m.group(1)); if (b > best) best = b; }
+        if (best < 0) throw new Exception("no Squeak 6.0 build listed");
+        String baseName = "Squeak6.0-" + best + "-64bit";
+        String url = "https://files.squeak.org/6.0/" + baseName + "/" + baseName + ".zip";
+        File zip = new File(getCacheDir(), "download.zip");
+        downloadToFile(url, zip, pd, "Downloading " + baseName);
+        setProgressMsg(pd, "Unzipping…");
+        unzipBundle(zip);
+        zip.delete();
+    }
+
+    private void downloadCuis(ProgressDialog pd) throws Exception {
+        setProgressMsg(pd, "Finding latest image…");
+        String json = httpGetString(
+                "https://api.github.com/repos/Cuis-Smalltalk/Cuis-Smalltalk-Dev/contents/CuisImage");
+        Matcher entry = Pattern.compile(
+                "\"name\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"download_url\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
+        java.util.HashMap<String, String> byName = new java.util.HashMap<>();
+        while (entry.find()) byName.put(entry.group(1), entry.group(2));
+        String imgName = null, imgUrl = null, srcName = null, srcUrl = null;
+        int bestMj = -1, bestMn = -1, bestBd = -1;
+        for (Map.Entry<String, String> e : byName.entrySet()) {
+            String name = e.getKey();
+            Matcher im = Pattern.compile("^Cuis(\\d+)\\.(\\d+)-(\\d+)\\.image$").matcher(name);
+            if (im.matches()) {
+                int mj = Integer.parseInt(im.group(1)), mn = Integer.parseInt(im.group(2)), bd = Integer.parseInt(im.group(3));
+                if (mj > bestMj || (mj == bestMj && (mn > bestMn || (mn == bestMn && bd > bestBd)))) {
+                    bestMj = mj; bestMn = mn; bestBd = bd; imgName = name; imgUrl = e.getValue();
+                }
+            }
+            if (name.endsWith(".sources")) { srcName = name; srcUrl = e.getValue(); }
+        }
+        if (imgUrl == null) throw new Exception("no Cuis .image found");
+        String chgUrl = byName.get(imgName.replace(".image", ".changes"));
+        downloadToFile(imgUrl, new File(getFilesDir(), "Cuis.image"), pd, "Downloading " + imgName);
+        if (chgUrl != null) downloadToFile(chgUrl, new File(getFilesDir(), "Cuis.changes"), pd, "Downloading changes");
+        if (srcUrl != null) downloadToFile(srcUrl, new File(getFilesDir(), srcName), pd, "Downloading sources");
+    }
+
+    private void setProgressMsg(final ProgressDialog pd, final String msg) {
+        runOnUiThread(() -> { pd.setIndeterminate(true); pd.setMessage(msg); });
+    }
+
+    /** GET a URL as a String (directory listing / JSON API). */
+    private String httpGetString(String urlStr) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(urlStr).openConnection();
+        c.setInstanceFollowRedirects(true);
+        c.setConnectTimeout(20000); c.setReadTimeout(20000);
+        c.setRequestProperty("User-Agent", "opensmalltalk-android");
+        try (InputStream in = c.getInputStream()) {
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[8192]; int n;
+            while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+            return bo.toString("UTF-8");
+        } finally { c.disconnect(); }
+    }
+
+    /** Stream a URL to a file, updating the ProgressDialog. */
+    private void downloadToFile(String urlStr, File dst, final ProgressDialog pd, final String label) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(urlStr).openConnection();
+        c.setInstanceFollowRedirects(true);
+        c.setConnectTimeout(20000); c.setReadTimeout(30000);
+        c.setRequestProperty("User-Agent", "opensmalltalk-android");
+        final int total = c.getContentLength();
+        runOnUiThread(() -> { pd.setMessage(label); pd.setIndeterminate(total <= 0); pd.setProgress(0); });
+        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[65536]; int n; long got = 0, lastPct = -1;
+            while ((n = in.read(buf)) != -1) {
+                out.write(buf, 0, n); got += n;
+                if (total > 0) {
+                    long pct = got * 100 / total;
+                    if (pct != lastPct) { lastPct = pct; final int p = (int) pct; runOnUiThread(() -> pd.setProgress(p)); }
+                }
+            }
+        } finally { c.disconnect(); }
+        Log.i(TAG, "downloaded " + urlStr + " -> " + dst.getName() + " (" + dst.length() + " bytes)");
+    }
+
+    /** Unzip a Squeak bundle: *.image -> Cuis.image, *.changes -> Cuis.changes, *.sources kept by name. */
+    private void unzipBundle(File zip) throws Exception {
+        boolean gotImage = false;
+        try (ZipInputStream zis = new ZipInputStream(
+                new java.io.BufferedInputStream(new java.io.FileInputStream(zip)))) {
+            ZipEntry ze;
+            while ((ze = zis.getNextEntry()) != null) {
+                if (ze.isDirectory()) continue;
+                String base = new File(ze.getName()).getName();
+                String low = base.toLowerCase();
+                File dst;
+                if (low.endsWith(".image")) { dst = new File(getFilesDir(), "Cuis.image"); gotImage = true; }
+                else if (low.endsWith(".changes")) dst = new File(getFilesDir(), "Cuis.changes");
+                else if (low.endsWith(".sources")) dst = new File(getFilesDir(), base);
+                else continue;
+                try (FileOutputStream out = new FileOutputStream(dst)) {
+                    byte[] buf = new byte[65536]; int n;
+                    while ((n = zis.read(buf)) != -1) out.write(buf, 0, n);
+                }
+                Log.i(TAG, "unzipped " + base + " -> " + dst.getName());
+            }
+        }
+        if (!gotImage) throw new Exception("no .image found in the downloaded zip");
     }
 
     /** Let the user pick a Smalltalk .image from device storage (SAF — no permission needed). */
