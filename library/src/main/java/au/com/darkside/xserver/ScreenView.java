@@ -293,6 +293,18 @@ public class ScreenView extends View {
         _pixelsPerMillimeter = pixelsPerMillimeter;
         _paint = new Paint();
 
+        // Backlog: pick a legible default zoom for THIS device's physical size
+        // (denser screen -> smaller physical pixels -> more zoom), independent of
+        // raw resolution, so the world is readable from the first launch. The user
+        // can still change it via the Zoom menu.
+        try {
+            int dpi = c.getResources().getDisplayMetrics().densityDpi;
+            float s = Math.round((dpi / 200.0f) * 2f) / 2f;       // ~dpi/200, rounded to 0.5
+            _displayScale = Math.max(1.0f, Math.min(2.5f, s));    // e.g. 440dpi->2.0, 264dpi->1.5
+        } catch (Exception e) {
+            _displayScale = 1.0f;
+        }
+
         mPendingPointerEvents = new PendingEventQueue<PendingPointerEvent>();
         mPendingKeyboardEvents = new PendingEventQueue<PendingKeyboardEvent>();
         // ---- Listeners for touch input ----
