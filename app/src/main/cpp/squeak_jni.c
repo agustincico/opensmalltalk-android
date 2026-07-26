@@ -100,7 +100,7 @@ void* run_squeak_thread(void* arg) {
     snprintf(dev_st_path, sizeof(dev_st_path), "%s/dev-tests.st", g_files_dir);
     int have_dev_st = (access(dev_st_path, R_OK) == 0);
 
-    char *argv[9];
+    char *argv[12];
     int argc = 0;
     argv[argc++] = (char*)"squeak";
     argv[argc++] = (char*)"-plugins";
@@ -108,6 +108,13 @@ void* run_squeak_thread(void* arg) {
     argv[argc++] = (char*)"-display";
     argv[argc++] = (char*)"127.0.0.1:0";
     argv[argc++] = g_image_path;
+    // Point Cuis's "user base directory" at the (writable, already-existing)
+    // filesDir. Cuis 6.x/7.x does `UserBaseDirectory assureExistence` on startup;
+    // its default path isn't creatable on Android, which pops a createDirectory
+    // error debugger. Since filesDir exists, assureExistence becomes a no-op.
+    // -ud is a Cuis option; other images (Squeak, Cuis 5.0) ignore it.
+    argv[argc++] = (char*)"-ud";
+    argv[argc++] = g_files_dir;
     if (have_dev_st) {
         argv[argc++] = (char*)"-s";
         argv[argc++] = dev_st_path;
