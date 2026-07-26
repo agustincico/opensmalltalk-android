@@ -8,6 +8,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
@@ -253,6 +254,10 @@ public class ScreenView extends View {
     private PendingEventQueue<PendingKeyboardEvent> mPendingKeyboardEvents;
 
     private boolean _ignoreLongPress = false;
+    // Long-press (hold a finger down) used to pop an ActionMode menu (CTRL+C/V/…,
+    // R-Click, Keyboard). It gets in the way of Smalltalk's own press-and-hold
+    // gestures, so it's OFF by default; re-enable from the options menu.
+    private boolean _enableLongPressMenu = false;
 
     private static final int ACTION_CANCEL = 0;
     private static final int ACTION_CTRL_C = 1;
@@ -401,6 +406,8 @@ public class ScreenView extends View {
         setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
+                if (!_enableLongPressMenu)
+                    return false;   // let Smalltalk see the press-and-hold instead
                 if (_ignoreLongPress)
                     return true;
 
@@ -811,6 +818,12 @@ public class ScreenView extends View {
             // lands under the finger at the right physical spot.
             canvas.drawBitmap(_currentCursor.getBitmap(), _currentCursorX - _currentCursor.getHotspotX(),
                     _currentCursorY - _currentCursor.getHotspotY(), null);
+            // Always-visible pointer: touch has no persistent hover, and Smalltalk
+            // often hides the X cursor (drawing its own only while moving), so the
+            // pointer would vanish. Draw a clear arrow at the last pointer position
+            // so you always see where the "mouse" is — and it stays put on lift.
+            if (_showPointer)
+                drawPointerMarker(canvas, _currentCursorX, _currentCursorY);
             if (zoom) canvas.restore();
 
             _drawnCursor = _currentCursor;
@@ -942,25 +955,59 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
      * @param y      New Y coordinate.
      * @param cursor The cursor to draw.
      */
-    private void movePointer(int x, int y, Cursor cursor) {
-        if (_drawnCursor != null) {
-            int left = _drawnCursorX - _drawnCursor.getHotspotX();
-            int top = _drawnCursorY - _drawnCursor.getHotspotY();
-            Bitmap bm = _drawnCursor.getBitmap();
+    private boolean _showPointer = true;
+    private Path _ptrPath = null;
+    private Paint _ptrFill = null, _ptrStroke = null;
 
-            postInvalidate(left, top, left + bm.getWidth(), top + bm.getHeight());
-            _drawnCursor = null;
+    /** Draw a classic arrow pointer (tip at x,y), always visible, over the world. */
+    private void drawPointerMarker(Canvas canvas, int x, int y) {
+        if (_ptrPath == null) {
+            // ~11x18 arrow with the tip at (0,0).
+            _ptrPath = new Path();
+            _ptrPath.moveTo(0, 0);
+            _ptrPath.lineTo(0, 17);
+            _ptrPath.lineTo(4, 13);
+            _ptrPath.lineTo(7, 20);
+            _ptrPath.lineTo(9, 19);
+            _ptrPath.lineTo(6, 12);
+            _ptrPath.lineTo(11, 12);
+            _ptrPath.close();
+            _ptrFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+            _ptrFill.setStyle(Paint.Style.FILL);
+            _ptrFill.setColor(0xFF000000);
+            _ptrStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+            _ptrStroke.setStyle(Paint.Style.STROKE);
+            _ptrStroke.setStrokeWidth(1.5f);
+            _ptrStroke.setColor(0xFFFFFFFF);
         }
+        canvas.save();
+        canvas.translate(x, y);
+        canvas.drawPath(_ptrPath, _ptrFill);
+        canvas.drawPath(_ptrPath, _ptrStroke);
+        canvas.restore();
+    }
 
+    /**
+     * Toggle the always-visible mouse pointer overlay.
+     *
+     * @return new state of switch
+     */
+    public boolean toggleShowPointer() {
+        _showPointer = !_showPointer;
+        postInvalidate();
+        return _showPointer;
+    }
+
+    private void movePointer(int x, int y, Cursor cursor) {
+        _drawnCursor = null;
         _currentCursor = cursor;
         _currentCursorX = x;
         _currentCursorY = y;
-
-        int left = x - cursor.getHotspotX();
-        int top = y - cursor.getHotspotY();
-        Bitmap bm = cursor.getBitmap();
-
-        postInvalidate(left, top, left + bm.getWidth(), top + bm.getHeight());
+        // Full invalidate: the old partial (cursor-bitmap-sized) region was in
+        // logical coords and ignored the display zoom, and it can't cover the
+        // always-visible pointer marker — a partial redraw would leave arrow
+        // trails. The world blit is cheap, so just repaint the view.
+        postInvalidate();
     }
 
     /**
@@ -1700,6 +1747,16 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     public boolean toggleEnableTouchClicks() {
         _enableTouchClicks = !_enableTouchClicks;
         return _enableTouchClicks;
+    }
+
+    /**
+     * Toggle the long-press ActionMode menu (CTRL+C/V/…, R-Click, Keyboard).
+     *
+     * @return new state of switch
+     */
+    public boolean toggleLongPressMenu() {
+        _enableLongPressMenu = !_enableLongPressMenu;
+        return _enableLongPressMenu;
     }
 
     /**

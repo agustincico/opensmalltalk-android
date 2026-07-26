@@ -112,6 +112,8 @@ public class XServerActivity extends Activity {
     private static final int MENU_TOGGLE_SHARED_CLIPBOARD = 10;
     private static final int MENU_ZOOM = 11;
     private static final int MENU_LOAD_IMAGE = 12;
+    private static final int MENU_TOGGLE_LONGPRESS = 13;
+    private static final int MENU_TOGGLE_POINTER = 14;
     private static final int ACTIVITY_ACCESS_CONTROL = 1;
     private static final int ACTIVITY_LOAD_IMAGE = 2;
     private static final int ACTIVITY_LOAD_CHANGES = 3;
@@ -373,6 +375,12 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         item = menu.add(0, MENU_TOGGLE_SHARED_CLIPBOARD, 0, "Shared Clipboard (on)");
         item.setIcon(android.R.drawable.star_on);
 
+        item = menu.add(0, MENU_TOGGLE_LONGPRESS, 0, "Long-press menu (off)");
+        item.setIcon(android.R.drawable.star_off);
+
+        item = menu.add(0, MENU_TOGGLE_POINTER, 0, "Mouse pointer (on)");
+        item.setIcon(android.R.drawable.star_on);
+
         item = menu.add(0, MENU_LOAD_IMAGE, 0, "Load image…");
 
         float zoom = 1.0f;
@@ -456,6 +464,24 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 } else {
                     item.setIcon(android.R.drawable.star_off);
                     item.setTitle("Shared Clipboard (off)");
+                }
+                return true;
+            case MENU_TOGGLE_LONGPRESS:
+                if (_xServer.getScreen().toggleLongPressMenu()) {
+                    item.setIcon(android.R.drawable.star_on);
+                    item.setTitle("Long-press menu (on)");
+                } else {
+                    item.setIcon(android.R.drawable.star_off);
+                    item.setTitle("Long-press menu (off)");
+                }
+                return true;
+            case MENU_TOGGLE_POINTER:
+                if (_xServer.getScreen().toggleShowPointer()) {
+                    item.setIcon(android.R.drawable.star_on);
+                    item.setTitle("Mouse pointer (on)");
+                } else {
+                    item.setIcon(android.R.drawable.star_off);
+                    item.setTitle("Mouse pointer (off)");
                 }
                 return true;
             case MENU_TOGGLE_WINDOWMANAGER:
