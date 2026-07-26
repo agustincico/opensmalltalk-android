@@ -89,6 +89,14 @@ ADB="$ANDROID_SDK_ROOT/platform-tools/adb"; [ -x "$ADB" ] || ADB="$(command -v a
 EMULATOR="$ANDROID_SDK_ROOT/emulator/emulator"; [ -x "$EMULATOR" ] || EMULATOR="$(command -v emulator || echo emulator)"
 export ADB EMULATOR
 
+# If several devices are attached (e.g. Agustín's physical phone plus the
+# emulator), default the whole loop to the emulator so it doesn't error with
+# "more than one device". Override by exporting ANDROID_SERIAL yourself.
+if [ -z "${ANDROID_SERIAL:-}" ]; then
+  _emu="$("$ADB" devices 2>/dev/null | grep -E '^emulator-[0-9]+[[:space:]]+device' | head -1 | awk '{print $1}')"
+  [ -n "$_emu" ] && export ANDROID_SERIAL="$_emu"
+fi
+
 # --- helpers ---------------------------------------------------------------
 # Run sdkmanager/avdmanager with the JDK they require. (Sourced into each
 # script's shell, so no need to export it — and `export -f` misbehaves in zsh.)

@@ -195,9 +195,9 @@ public class ScreenView extends View {
         Log.i("ScreenView", "displayScale=" + _displayScale + " logical=" + logicalWidth() + "x" + logicalHeight());
     }
 
-    /** Cycle 1.0 -> 1.5 -> 2.0 -> 2.5 -> 1.0. Returns the new scale. */
+    /** Cycle the zoom in 0.25 steps, 1.0 .. 2.5, wrapping. Returns the new scale. */
     public float cycleDisplayScale() {
-        float next = _displayScale + 0.5f;
+        float next = Math.round(_displayScale * 4f) / 4f + 0.25f;
         if (next > 2.5f) next = 1.0f;
         setDisplayScale(next);
         return _displayScale;
@@ -299,8 +299,11 @@ public class ScreenView extends View {
         // can still change it via the Zoom menu.
         try {
             int dpi = c.getResources().getDisplayMetrics().densityDpi;
-            float s = Math.round((dpi / 200.0f) * 2f) / 2f;       // ~dpi/200, rounded to 0.5
-            _displayScale = Math.max(1.0f, Math.min(2.5f, s));    // e.g. 440dpi->2.0, 264dpi->1.5
+            // gentle curve above mdpi(160), rounded to 0.25, clamped 1.0–2.5.
+            // e.g. 440dpi(emu/Pixel5)->1.75, 264dpi(Galaxy A12)->1.25, 160dpi->1.0
+            float s = 1.0f + (dpi - 160) / 360.0f;
+            s = Math.round(s * 4f) / 4f;
+            _displayScale = Math.max(1.0f, Math.min(2.5f, s));
         } catch (Exception e) {
             _displayScale = 1.0f;
         }
