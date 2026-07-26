@@ -738,7 +738,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     private void showLoadImageDialog(String message) {
         if (message != null)
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        final String[] options = { "Latest Squeak (download)", "Latest Cuis (download)",
+        final String[] options = { "Latest Squeak (download)", "Cuis 7.5 (download)",
                 "From device…", "Bundled Cuis (offline)" };
         new AlertDialog.Builder(this)
                 .setTitle("Load image")
@@ -818,9 +818,15 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     }
 
     private void downloadCuis(ProgressDialog pd) throws Exception {
-        setProgressMsg(pd, "Finding latest image…");
+        setProgressMsg(pd, "Finding image…");
+        // Pin to the stable base tag (currently Cuis 7.5-7775) rather than master
+        // HEAD: the bleeding-edge dev image (Cuis 7.9-8090) boots but renders a blank
+        // white world on our embedded X server. 7.5 renders + runs fine. The tag name
+        // starts with '#', URL-encoded as %23. The download_url values the API returns
+        // are already correctly encoded for this ref.
+        String ref = "%23BaseForCuis7.6";
         String json = httpGetString(
-                "https://api.github.com/repos/Cuis-Smalltalk/Cuis-Smalltalk-Dev/contents/CuisImage");
+                "https://api.github.com/repos/Cuis-Smalltalk/Cuis-Smalltalk-Dev/contents/CuisImage?ref=" + ref);
         Matcher entry = Pattern.compile(
                 "\"name\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"download_url\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
         java.util.HashMap<String, String> byName = new java.util.HashMap<>();
