@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
 #
-# deploy.sh — install the debug APK, (re)launch the activity, and wait until
-# the Smalltalk VM has actually opened the image (not just the process start).
+# deploy.sh — install the debug APK and (re)launch the activity.
 #
-#   ./scripts/loop/deploy.sh              # install -r + relaunch + wait
-#   ./scripts/loop/deploy.sh --fresh      # uninstall first (clears filesDir → re-extracts assets)
+#   ./scripts/loop/deploy.sh              # install -r + relaunch
+#   ./scripts/loop/deploy.sh --fresh      # uninstall first (clears filesDir)
 #   ./scripts/loop/deploy.sh --no-install # just relaunch what's installed
 #
-# Note: on a fresh install the ~22MB image+changes are extracted on a background
-# thread while the VM launches ~500ms later — a race that can miss the image.
-# We defeat it deterministically: wait for the extracted image to reach full
-# size, then relaunch once so the VM boots against a complete file.
+# The image/changes are no longer auto-extracted from the APK: on first boot the
+# app shows the "Load image" chooser (download / pick from device / bundled Cuis),
+# and only then copies an image into filesDir and restarts to boot it. So there
+# is nothing to wait for here — we just install, launch, and confirm it's up.
+# (The old asset-extraction race is gone with the auto-extract.)
 #
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
@@ -35,45 +35,17 @@ fi
 launch() { "$ADB" shell am start -n "$PKG/$ACTIVITY" >/dev/null 2>&1; }
 stop()   { "$ADB" shell am force-stop "$PKG" >/dev/null 2>&1 || true; }
 
-# Expected asset sizes (0 = unknown → just check the file is non-empty & stable)
-img_asset="$REPO_ROOT/app/src/main/assets/$IMAGE_NAME"
-want_img=0; [ -f "$img_asset" ] && want_img="$(wc -c < "$img_asset" | tr -d ' ')"
-
-# Never let a missing file / failing stat abort the script (set -e + pipefail):
-dev_size() { "$ADB" shell run-as "$PKG" stat -c %s "files/$1" 2>/dev/null | tr -d '\r' || true; }
-
-loop_log "launch #1 (triggers asset extraction on fresh installs)"
+loop_log "launch"
 stop; launch
 
-loop_log "waiting for $IMAGE_NAME in filesDir to be complete…"
-ok=0
-for _ in $(seq 1 90); do
-  s="$(dev_size "$IMAGE_NAME")"; s="${s:-0}"
-  if [ "$want_img" != 0 ]; then
-    [ "$s" = "$want_img" ] && { ok=1; break; }
-  else
-    # size unknown (image pushed, not embedded): accept once it's stable & >1MB
-    sleep 1; s2="$(dev_size "$IMAGE_NAME")"; s2="${s2:-0}"
-    [ "$s" -gt 1000000 ] && [ "$s" = "$s2" ] && { ok=1; break; }
-  fi
-  sleep 1
-done
-[ "$ok" = 1 ] || loop_err "image not present/complete in filesDir (size=$(dev_size "$IMAGE_NAME"))"
-
-loop_log "relaunch #2 (VM boots against the complete image)"
-stop; launch
-
-# wait for the VM thread to report the image opened (or fail)
-loop_log "waiting for VM to open the image…"
-opened=0
-for _ in $(seq 1 30); do
-  if "$ADB" logcat -d -s SQUEAK_VM 2>/dev/null | grep -qiE 'could not open the squeak image'; then
-    loop_err "VM could not open the image — check logcat"; break
-  fi
-  if "$ADB" logcat -d -s SQUEAK 2>/dev/null | grep -q 'g_squeak_main'; then opened=1; fi
+# Confirm the process is up. If an image is already present (marker set), the VM
+# boots it; on a fresh install the chooser is shown instead — either way the
+# process should be running within a few seconds.
+loop_log "waiting for the app process…"
+pid=""
+for _ in $(seq 1 20); do
   pid="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r' || true)"
-  [ "$opened" = 1 ] && [ -n "$pid" ] && break
+  [ -n "$pid" ] && break
   sleep 1
 done
-pid="$("$ADB" shell pidof "$PKG" 2>/dev/null | tr -d '\r')"
 if [ -n "$pid" ]; then loop_log "app running (pid $pid)"; else loop_err "app not running after launch"; fi

@@ -15,6 +15,7 @@ import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
@@ -167,6 +168,12 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 
         // Delay corto para asegurar que DISPLAY esté listo
         _screenView.postDelayed(() -> {
+            // Nothing chosen yet? Don't auto-boot the bundled image — show the
+            // "Load image" chooser (download Squeak/Cuis, or browse the device).
+            if (!new File(getFilesDir(), ".custom_image").exists()) {
+                showLoadImageDialog();
+                return;
+            }
             try {
                 String libPath = getApplicationInfo().nativeLibraryDir + "/libsqueak.so";
                 String imagePath = getFilesDir().getAbsolutePath() + "/Cuis.image";
@@ -531,33 +538,47 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         }
         if (requestCode == ACTIVITY_LOAD_IMAGE) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                if (copyUriToFile(data.getData(), new File(getFilesDir(), "Cuis.image"))) {
+                Uri imgUri = data.getData();
+                if (copyUriToFile(imgUri, new File(getFilesDir(), "Cuis.image"))) {
+                    // Assume the .changes lives next to the .image (same folder) and
+                    // grab it automatically — no second picker.
+                    copySiblingChanges(imgUri);
                     // Mark so extractAssets() never overwrites this custom image / changes.
                     try { new File(getFilesDir(), ".custom_image").createNewFile(); }
                     catch (IOException e) { Log.e(TAG, "could not write .custom_image marker", e); }
-                    Toast.makeText(this, "Image loaded. Now pick its .changes, or press Back to skip.",
-                            Toast.LENGTH_LONG).show();
-                    launchChangesPicker();
+                    Toast.makeText(this, "Image loaded — restarting.", Toast.LENGTH_SHORT).show();
+                    restartApp();
                 } else {
                     Toast.makeText(this, "Could not read the selected image.", Toast.LENGTH_LONG).show();
                 }
             }
             return;
         }
-        if (requestCode == ACTIVITY_LOAD_CHANGES) {
-            File changes = new File(getFilesDir(), "Cuis.changes");
-            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                copyUriToFile(data.getData(), changes);
-            } else {
-                // Skipped: boot with NO changes file. An empty/mismatched .changes
-                // makes Cuis crash a few seconds in when it first appends a change;
-                // no changes at all is stable. (The .custom_image marker stops
-                // extractAssets() from re-creating the bundled one.)
-                if (changes.exists()) changes.delete();
+    }
+
+    /**
+     * Copy the .changes file that sits beside the picked .image (same directory) into
+     * filesDir as Cuis.changes. Derives the sibling document URI by swapping the
+     * extension in the document id (works for on-device providers: Downloads, storage).
+     * If there's no sibling, boot without a changes file (stable) rather than keeping
+     * a mismatched one.
+     */
+    private void copySiblingChanges(Uri imgUri) {
+        File changes = new File(getFilesDir(), "Cuis.changes");
+        try {
+            String docId = DocumentsContract.getDocumentId(imgUri);
+            if (docId != null && docId.toLowerCase().endsWith(".image")) {
+                String chgId = docId.substring(0, docId.length() - ".image".length()) + ".changes";
+                Uri chgUri = DocumentsContract.buildDocumentUri(imgUri.getAuthority(), chgId);
+                if (copyUriToFile(chgUri, changes)) {
+                    Log.i(TAG, "copied sibling .changes");
+                    return;
+                }
             }
-            restartApp(); // re-init the native VM against the newly loaded image
-            return;
+        } catch (Exception e) {
+            Log.i(TAG, "no sibling .changes: " + e.getMessage());
         }
+        if (changes.exists()) changes.delete();  // boot without changes rather than mismatched
     }
 
     /**
@@ -577,28 +598,43 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
 
-        Button menuBtn = new Button(this);
-        menuBtn.setText("☰");          // ☰
+        // a solid, rounded dark pill (no washed-out alpha)
+        android.graphics.drawable.GradientDrawable pill = new android.graphics.drawable.GradientDrawable();
+        pill.setColor(0xE62A2A2E);
+        pill.setCornerRadius(dp(22));
+        pill.setStroke(dp(1), 0x33FFFFFF);
+        bar.setBackground(pill);
+        bar.setPadding(dp(4), dp(2), dp(4), dp(2));
+
+        Button menuBtn = makeIconButton("☰");   // ☰
         menuBtn.setOnClickListener(v -> openOptionsMenu());
-
-        Button kbdBtn = new Button(this);
-        kbdBtn.setText("⌨");           // ⌨
+        Button kbdBtn = makeIconButton("⌨");    // ⌨
         kbdBtn.setOnClickListener(v -> toggleKeyboard());
-
-        for (Button b : new Button[] { menuBtn, kbdBtn }) {
-            b.setAlpha(0.55f);
-            b.setTextColor(Color.WHITE);
-            b.setBackgroundColor(0xAA000000);
-            b.setPadding(24, 8, 24, 8);
-            b.setMinWidth(0);
-            b.setMinHeight(0);
-            bar.addView(b);
-        }
+        bar.addView(menuBtn);
+        bar.addView(kbdBtn);
 
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         lp.gravity = Gravity.TOP | Gravity.START;
+        lp.setMargins(dp(8), dp(8), 0, 0);
         fl.addView(bar, lp);
+    }
+
+    private Button makeIconButton(String glyph) {
+        Button b = new Button(this);
+        b.setText(glyph);
+        b.setTextColor(Color.WHITE);
+        b.setTextSize(20);
+        b.setBackgroundColor(Color.TRANSPARENT);
+        b.setMinWidth(0);
+        b.setMinHeight(0);
+        b.setPadding(dp(16), dp(6), dp(16), dp(6));
+        b.setIncludeFontPadding(false);
+        return b;
+    }
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
     }
 
     /** Bring up / dismiss the Android soft keyboard, aimed at the Smalltalk view. */
@@ -609,15 +645,45 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
     }
 
+    /** Copy the APK's bundled Cuis image/changes into filesDir and boot it (works offline). */
+    private void loadBundledImage() {
+        final ProgressDialog pd = new ProgressDialog(this);
+        pd.setMessage("Loading bundled Cuis…");
+        pd.setCancelable(false);
+        pd.show();
+        new Thread(() -> {
+            try {
+                copyAsset("Cuis.image", new File(getFilesDir(), "Cuis.image"));
+                try { copyAsset("Cuis.changes", new File(getFilesDir(), "Cuis.changes")); }
+                catch (Exception ignore) { /* image may ship without a .changes */ }
+                new File(getFilesDir(), ".custom_image").createNewFile();
+                runOnUiThread(() -> { pd.dismiss(); restartApp(); });
+            } catch (Exception e) {
+                Log.e(TAG, "loadBundledImage failed", e);
+                runOnUiThread(() -> { pd.dismiss();
+                    Toast.makeText(this, "No bundled image: " + e.getMessage(), Toast.LENGTH_LONG).show(); });
+            }
+        }).start();
+    }
+
+    private void copyAsset(String assetName, File dst) throws IOException {
+        try (InputStream in = getAssets().open(assetName); FileOutputStream out = new FileOutputStream(dst)) {
+            byte[] buf = new byte[65536]; int n;
+            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+        }
+    }
+
     /** "Load image…" → choose: download the latest Squeak or Cuis, or browse the device. */
     private void showLoadImageDialog() {
-        final String[] options = { "Latest Squeak (download)", "Latest Cuis (download)", "From device…" };
+        final String[] options = { "Latest Squeak (download)", "Latest Cuis (download)",
+                "From device…", "Bundled Cuis (offline)" };
         new AlertDialog.Builder(this)
                 .setTitle("Load image")
                 .setItems(options, (dialog, which) -> {
                     if (which == 0) downloadAndLoad("Squeak");
                     else if (which == 1) downloadAndLoad("Cuis");
-                    else launchImagePicker();
+                    else if (which == 2) launchImagePicker();
+                    else loadBundledImage();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -803,9 +869,12 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 
     /**
      * Restart the process so the native VM re-initialises with the new image.
-     * The relaunch is scheduled ~600ms out via AlarmManager so the current
-     * process (and its X server socket on 127.0.0.1:0) is fully torn down before
-     * the new VM starts — otherwise the two race and the fresh boot dies.
+     *
+     * The VM can't re-init in a live process, so we must kill this process and
+     * boot a fresh one. We hand that off to {@link RestartActivity}, a trampoline
+     * in a separate process: while we're STILL in the foreground (so the start is
+     * allowed on Android 10+, unlike a backgrounded AlarmManager relaunch, which
+     * Android blocks) we launch it, and it kills us and relaunches us cleanly.
      */
     private void restartApp() {
         // Close the X server socket (127.0.0.1:6000) cleanly first — otherwise the
@@ -813,27 +882,25 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // server can't serve, and the new process dies a few seconds in.
         try { if (_xServer != null) _xServer.stop(); } catch (Exception e) { Log.e(TAG, "xserver stop", e); }
 
-        Intent restart = new Intent(this, XServerActivity.class);
-        restart.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) flags |= PendingIntent.FLAG_IMMUTABLE;
-        PendingIntent pi = PendingIntent.getActivity(this, 0, restart, flags);
-        AlarmManager mgr = (AlarmManager) getSystemService(Context.ALARM_SERVICE);
-        if (mgr == null) { startActivity(restart); Runtime.getRuntime().exit(0); return; }
+        Intent next = new Intent(this, XServerActivity.class);
+        next.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
 
-        // Relaunch ~1.3s out, after this process is fully gone.
-        mgr.set(AlarmManager.RTC, System.currentTimeMillis() + 1300, pi);
+        Intent trampoline = new Intent(this, RestartActivity.class);
+        trampoline.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK
+                | Intent.FLAG_ACTIVITY_NO_ANIMATION);
+        trampoline.putExtra(RestartActivity.EXTRA_PID, android.os.Process.myPid());
+        trampoline.putExtra(RestartActivity.EXTRA_NEXT, next);
 
-        // Send the app to the background FIRST. If we die while still the foreground
-        // activity, Android instantly auto-restarts us, and that fresh process —
-        // racing the dying native VM / X server — itself dies ~6s in. Backgrounded,
-        // Android doesn't auto-restart, so only our alarm brings it back, cleanly.
-        Intent home = new Intent(Intent.ACTION_MAIN);
-        home.addCategory(Intent.CATEGORY_HOME);
-        home.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        startActivity(home);
-        new android.os.Handler(android.os.Looper.getMainLooper())
-                .postDelayed(() -> Runtime.getRuntime().exit(0), 400);
+        try {
+            startActivity(trampoline);
+        } catch (Exception e) {
+            // Last-resort fallback: relaunch directly and exit. Racier, but better
+            // than staying dead if the trampoline can't be started for some reason.
+            Log.e(TAG, "trampoline start failed, falling back", e);
+            startActivity(next);
+            new android.os.Handler(android.os.Looper.getMainLooper())
+                    .postDelayed(() -> Runtime.getRuntime().exit(0), 400);
+        }
     }
 
     /**
@@ -971,15 +1038,15 @@ private void extractAssets() {
             String[] files = getAssets().list(""); // lista la raíz de assets
             if (files == null) return;
 
-            boolean customImage = new File(getFilesDir(), ".custom_image").exists();
             for (String filename : files) {
                 // saltear directorios (plugins ya lo maneja extractPlugins)
                 String[] sub = getAssets().list(filename);
                 if (sub != null && sub.length > 0) continue; // es directorio
 
-                // Once the user loaded a custom image via "Load image…", never
-                // overwrite it (or wrongly re-create its .changes) from the APK.
-                if (customImage && (filename.equals("Cuis.image") || filename.equals("Cuis.changes")))
+                // The image/changes are never auto-extracted anymore: startup shows
+                // the "Load image" chooser, and "Bundled Cuis" copies them on demand.
+                // (Auto-extracting here would also race that copy.)
+                if (filename.equals("Cuis.image") || filename.equals("Cuis.changes"))
                     continue;
 
                 File destFile = new File(getFilesDir(), filename);

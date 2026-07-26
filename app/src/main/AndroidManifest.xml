@@ -38,5 +38,16 @@
         <activity
             android:name="au.com.darkside.x11server.AccessControlEditor"
             android:label="Authorized IP addresses" />
+        <!-- Tiny trampoline that lives in its OWN process (:restart) so it can
+             kill + relaunch the main app process when switching images. See
+             RestartActivity for why the old go-HOME + AlarmManager approach
+             failed on Android 10+ (background-activity-start is blocked). -->
+        <activity
+            android:name="au.com.darkside.x11server.RestartActivity"
+            android:process=":restart"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>
