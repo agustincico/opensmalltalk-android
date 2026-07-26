@@ -157,10 +157,22 @@ From the README "Known limitations" plus what the loop surfaced:
    port (6000), then starts `XServerActivity` fresh (a foreground start, allowed)
    and finishes after a short delay (killing our own process immediately would
    cancel the pending launch). See `RestartActivity` + `XServerActivity.restartApp`.
-   Caveat: *Latest Cuis* downloads **Cuis 7.9-8090**, which renders a white/gray
-   unresponsive world (bleeding-edge Cuis compat, not the restart); 7.5 / Squeak
-   6.0 / bundled Cuis render fine.
-5. **File-write errors depending on storage permissions.**
+   **Cuis download pinned to a stable version:** master HEAD (Cuis 7.9-8090)
+   renders a **blank white world** on the embedded X server (confirmed on a real
+   phone too; the image boots + responds to taps but never draws — an upstream
+   Cuis compat issue). So *"Cuis 7.5 (download)"* fetches the stable base tag
+   (`?ref=%23BaseForCuis7.6` → Cuis7.5-7775 + Cuis7.4.sources), which renders +
+   runs; 7.5 / Squeak 6.0 / bundled Cuis are all fine.
+   **Bad image no longer bricks the app:** a 32-bit image made the 64-bit VM abort
+   the process every launch (unusable until reinstall). Startup now rejects 32-bit
+   images (format-magic 6521/6505/6504) up front and uses a `.boot_pending`
+   crash-loop guard (written before `startVMNative`, cleared ~7s in once healthy);
+   a launch that finds it still set drops the marker and returns to the chooser.
+5. **Floating controls are collapsible, bottom-right.** The ☰ (options) / ⌨
+   (keyboard) buttons sat over the world; now they collapse to a minimal `‹` handle
+   in the bottom-right corner that slides them out on tap. Doubles as an **escape
+   hatch** from a blank-rendering image (☰ → *Load image…* still works).
+6. **File-write errors depending on storage permissions.**
 
 Non-issues (benign, ignore): `pthread_setschedparam failed: Operation not
 permitted` (VM can't get realtime prio; falls back to itimer) and
