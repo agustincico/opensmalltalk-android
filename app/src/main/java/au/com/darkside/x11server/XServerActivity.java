@@ -24,6 +24,7 @@ import android.view.Menu;
 import android.view.MenuItem;
 import android.view.WindowManager;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
@@ -94,6 +95,7 @@ public class XServerActivity extends Activity {
 
     private XServer _xServer;
     private ScreenView _screenView;
+    private boolean _controlsExpanded = false;  // floating menu drawer state
     private WakeLock _wakeLock;
 
     private static final String NOTIFICATION_CHANNEL_DEFAULT = "default";
@@ -168,16 +170,38 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 
         // Delay corto para asegurar que DISPLAY esté listo
         _screenView.postDelayed(() -> {
+            File filesDir = getFilesDir();
+            File marker = new File(filesDir, ".custom_image");
             // Nothing chosen yet? Don't auto-boot the bundled image — show the
             // "Load image" chooser (download Squeak/Cuis, or browse the device).
-            if (!new File(getFilesDir(), ".custom_image").exists()) {
+            if (!marker.exists()) {
                 showLoadImageDialog();
                 return;
             }
+
+            File image = new File(filesDir, "Cuis.image");
+            File bootPending = new File(filesDir, ".boot_pending");
+
+            // Don't brick the app on an image that can't boot (a 32-bit image, say,
+            // makes the 64-bit VM abort the whole process → the app "dies" and, since
+            // the marker + bad image persist, keeps dying every launch). Two guards:
+            //  (a) crash-loop: the previous boot wrote .boot_pending and never cleared
+            //      it (a healthy boot clears it a few seconds in), so it died early;
+            //  (b) the image isn't a 64-bit Spur image (wrong word size).
+            if (bootPending.exists() || is32BitSpurImage(image)) {
+                Log.w(TAG, "previous image failed to boot (pending=" + bootPending.exists()
+                        + ", 32bit=" + is32BitSpurImage(image) + ") — back to the chooser");
+                bootPending.delete();
+                marker.delete();  // clears the loop; the chooser opens instead
+                showLoadImageDialog("The previous image couldn't start — it needs to be a "
+                        + "64-bit Spur image. Pick another.");
+                return;
+            }
+
             try {
                 String libPath = getApplicationInfo().nativeLibraryDir + "/libsqueak.so";
-                String imagePath = getFilesDir().getAbsolutePath() + "/Cuis.image";
-                String pluginsPath = getFilesDir().getAbsolutePath() + "/plugins";
+                String imagePath = image.getAbsolutePath();
+                String pluginsPath = filesDir.getAbsolutePath() + "/plugins";
 
                 Log.i(TAG, "Lanzando VM");
                 Log.i(TAG, "libPath=" + libPath);
@@ -189,8 +213,17 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 // image doesn't pop the "Last changes may have been lost" dialog.
                 pruneChangesFile();
 
+                // Mark the boot in-progress; a healthy run clears it below. If the VM
+                // aborts on a bad image, this file survives → next launch recovers (a).
+                try { bootPending.createNewFile(); } catch (IOException ignore) {}
+
                 int res = startVMNative(libPath, imagePath, pluginsPath);
                 Log.i(TAG, "startVMNative() retornó: " + res);
+
+                // Still alive a few seconds later ⇒ the image booted fine.
+                _screenView.postDelayed(() -> {
+                    if (bootPending.delete()) Log.i(TAG, "boot healthy; cleared .boot_pending");
+                }, 7000);
 
             } catch (Throwable t) {
                 Log.e(TAG, "Error lanzando VM", t);
@@ -539,7 +572,16 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         if (requestCode == ACTIVITY_LOAD_IMAGE) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 Uri imgUri = data.getData();
-                if (copyUriToFile(imgUri, new File(getFilesDir(), "Cuis.image"))) {
+                File image = new File(getFilesDir(), "Cuis.image");
+                if (copyUriToFile(imgUri, image)) {
+                    // Reject a 32-bit image up front (the 64-bit VM would abort on it)
+                    // so we never set the marker / restart into a boot that bricks.
+                    if (is32BitSpurImage(image)) {
+                        image.delete();
+                        showLoadImageDialog("That image is 32-bit — the VM needs a 64-bit "
+                                + "Spur image. Pick another.");
+                        return;
+                    }
                     // Assume the .changes lives next to the .image (same folder) and
                     // grab it automatically — no second picker.
                     copySiblingChanges(imgUri);
@@ -597,6 +639,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     private void addFloatingControls(FrameLayout fl) {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
+        bar.setGravity(Gravity.CENTER_VERTICAL);
 
         // a solid, rounded dark pill (no washed-out alpha)
         android.graphics.drawable.GradientDrawable pill = new android.graphics.drawable.GradientDrawable();
@@ -606,17 +649,32 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         bar.setBackground(pill);
         bar.setPadding(dp(4), dp(2), dp(4), dp(2));
 
-        Button menuBtn = makeIconButton("☰");   // ☰
+        Button menuBtn = makeIconButton("☰");   // options menu (Load image…, Zoom, …)
         menuBtn.setOnClickListener(v -> openOptionsMenu());
-        Button kbdBtn = makeIconButton("⌨");    // ⌨
+        Button kbdBtn = makeIconButton("⌨");    // toggle the soft keyboard
         kbdBtn.setOnClickListener(v -> toggleKeyboard());
+        // Collapsed by default so the menu doesn't sit over the image — only the
+        // small handle shows; tapping it slides the buttons out.
+        menuBtn.setVisibility(View.GONE);
+        kbdBtn.setVisibility(View.GONE);
+
+        final Button handle = makeIconButton("‹");  // the minimal always-visible tab
+        handle.setOnClickListener(v -> {
+            _controlsExpanded = !_controlsExpanded;
+            menuBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
+            kbdBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
+            handle.setText(_controlsExpanded ? "›" : "‹");
+        });
+
         bar.addView(menuBtn);
         bar.addView(kbdBtn);
+        bar.addView(handle);
 
+        // Bottom-right corner, out of the way of the Smalltalk world/menus.
         FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        lp.gravity = Gravity.TOP | Gravity.START;
-        lp.setMargins(dp(8), dp(8), 0, 0);
+        lp.gravity = Gravity.BOTTOM | Gravity.END;
+        lp.setMargins(0, 0, dp(10), dp(16));
         fl.addView(bar, lp);
     }
 
@@ -674,7 +732,12 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     }
 
     /** "Load image…" → choose: download the latest Squeak or Cuis, or browse the device. */
-    private void showLoadImageDialog() {
+    private void showLoadImageDialog() { showLoadImageDialog(null); }
+
+    /** As above, optionally preceded by a short explanatory toast (e.g. after a bad image). */
+    private void showLoadImageDialog(String message) {
+        if (message != null)
+            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
         final String[] options = { "Latest Squeak (download)", "Latest Cuis (download)",
                 "From device…", "Bundled Cuis (offline)" };
         new AlertDialog.Builder(this)
@@ -687,6 +750,24 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    /**
+     * True if the file's image-format magic is a known 32-bit (or V3) Squeak format,
+     * which the bundled 64-bit Spur VM can't boot. Reads the first 4 bytes as a
+     * little-endian format number. 64-bit Spur images (68021 / 68531 / 68533) → false.
+     */
+    private boolean is32BitSpurImage(File image) {
+        if (image == null || !image.isFile()) return false;
+        try (InputStream in = new java.io.FileInputStream(image)) {
+            byte[] b = new byte[4];
+            int n = 0; while (n < 4) { int r = in.read(b, n, 4 - n); if (r < 0) break; n += r; }
+            if (n < 4) return false;
+            int fmt = (b[0] & 0xFF) | ((b[1] & 0xFF) << 8) | ((b[2] & 0xFF) << 16) | ((b[3] & 0xFF) << 24);
+            return fmt == 6521 || fmt == 6505 || fmt == 6504;  // 32-bit Spur / V3
+        } catch (Exception e) {
+            return false;  // unreadable → let the boot path deal with it (guard a still covers it)
+        }
     }
 
     /** Download the latest Squeak/Cuis image into filesDir on a background thread, then restart. */
