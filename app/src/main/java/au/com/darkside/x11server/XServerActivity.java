@@ -22,8 +22,13 @@ import android.os.PowerManager.WakeLock;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.WindowManager;
+import android.view.Gravity;
+import android.view.ViewGroup;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.graphics.Color;
 import android.widget.Toast;
 
 import android.app.ProgressDialog;
@@ -193,6 +198,11 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 
         _screenView = _xServer.getScreen();
         fl.addView(_screenView);
+
+        // On-screen access to the options menu + soft keyboard. Phones have no
+        // hardware MENU key and the ActionBar is hidden in fullscreen, so without
+        // this there's no way to reach "Load image…" or bring up the keyboard.
+        addFloatingControls(fl);
 
         PowerManager pm;
 
@@ -557,6 +567,46 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         Intent intent = new Intent(this, AccessControlEditor.class);
 
         startActivityForResult(intent, ACTIVITY_ACCESS_CONTROL);
+    }
+
+    /**
+     * Small semi-transparent overlay (top-left) with a menu button and a keyboard
+     * button, so the app is usable on phones with no hardware MENU key.
+     */
+    private void addFloatingControls(FrameLayout fl) {
+        LinearLayout bar = new LinearLayout(this);
+        bar.setOrientation(LinearLayout.HORIZONTAL);
+
+        Button menuBtn = new Button(this);
+        menuBtn.setText("☰");          // ☰
+        menuBtn.setOnClickListener(v -> openOptionsMenu());
+
+        Button kbdBtn = new Button(this);
+        kbdBtn.setText("⌨");           // ⌨
+        kbdBtn.setOnClickListener(v -> toggleKeyboard());
+
+        for (Button b : new Button[] { menuBtn, kbdBtn }) {
+            b.setAlpha(0.55f);
+            b.setTextColor(Color.WHITE);
+            b.setBackgroundColor(0xAA000000);
+            b.setPadding(24, 8, 24, 8);
+            b.setMinWidth(0);
+            b.setMinHeight(0);
+            bar.addView(b);
+        }
+
+        FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.TOP | Gravity.START;
+        fl.addView(bar, lp);
+    }
+
+    /** Bring up / dismiss the Android soft keyboard, aimed at the Smalltalk view. */
+    private void toggleKeyboard() {
+        InputMethodManager imm = (InputMethodManager) getSystemService(Service.INPUT_METHOD_SERVICE);
+        if (imm == null || _screenView == null) return;
+        _screenView.requestFocus();
+        imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
     }
 
     /** "Load image…" → choose: download the latest Squeak or Cuis, or browse the device. */
