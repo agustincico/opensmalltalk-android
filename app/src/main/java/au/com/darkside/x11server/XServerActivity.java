@@ -807,7 +807,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 .setItems(labels, (dialog, which) -> {
                     switch (which) {
                         case 0: showLoadImageDialog(); break;
-                        case 1: sv.cycleDisplayScale(); showOptionsDialog(); break;  // reopen to keep cycling
+                        case 1: showZoomDialog(); break;
                         case 2: {
                             boolean on = sv.toggleTrackpadMode();
                             Toast.makeText(this, on
@@ -822,6 +822,29 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                         case 7: toggleOrientation(); break;
                     }
                 })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    /**
+     * Pick a zoom level directly (better than cycling, and goes higher). Whole-number
+     * zooms are pixel-crisp because the upscale is nearest-neighbour; fractional ones
+     * (e.g. 1.75×) scale unevenly and look softer — so they're labelled.
+     */
+    private void showZoomDialog() {
+        final ScreenView sv = _xServer.getScreen();
+        final float[] levels = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f };
+        float cur = 1.0f;
+        try { cur = sv.getDisplayScale(); } catch (Exception e) { }
+        final String[] labels = new String[levels.length];
+        for (int i = 0; i < levels.length; i++) {
+            boolean whole = levels[i] == Math.rint(levels[i]);
+            boolean current = Math.abs(levels[i] - cur) < 0.01f;
+            labels[i] = (current ? "●  " : "○  ") + levels[i] + "×" + (whole ? "   (sharp)" : "");
+        }
+        new AlertDialog.Builder(this)
+                .setTitle("Zoom — whole numbers are sharpest")
+                .setItems(labels, (dialog, which) -> sv.setDisplayScale(levels[which]))
                 .setNegativeButton("Close", null)
                 .show();
     }
