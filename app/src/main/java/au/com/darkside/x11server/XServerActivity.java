@@ -795,6 +795,8 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         final String[] labels = {
                 "Load image…",
                 "Zoom (" + zoom + "×)",
+                "Trackpad mode: " + (sv.isTrackpadMode() ? "on" : "off"),
+                "Precise pointer: " + (sv.isPreciseTouch() ? "on" : "off"),
                 "Mouse pointer: " + (sv.isShowPointer() ? "on" : "off"),
                 "Shared clipboard: " + (sv.isSharedClipboard() ? "on" : "off"),
                 "Long-press menu: " + (sv.isLongPressMenuEnabled() ? "on" : "off"),
@@ -806,10 +808,18 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     switch (which) {
                         case 0: showLoadImageDialog(); break;
                         case 1: sv.cycleDisplayScale(); showOptionsDialog(); break;  // reopen to keep cycling
-                        case 2: sv.toggleShowPointer(); break;
-                        case 3: sv.toggleSharedClipboard(); break;
-                        case 4: sv.toggleLongPressMenu(); break;
-                        case 5: toggleOrientation(); break;
+                        case 2: {
+                            boolean on = sv.toggleTrackpadMode();
+                            Toast.makeText(this, on
+                                    ? "Trackpad: slide to move the pointer, tap to click, hold+drag to drag."
+                                    : "Trackpad off (direct touch).", Toast.LENGTH_LONG).show();
+                            break;
+                        }
+                        case 3: sv.togglePreciseTouch(); break;
+                        case 4: sv.toggleShowPointer(); break;
+                        case 5: sv.toggleSharedClipboard(); break;
+                        case 6: sv.toggleLongPressMenu(); break;
+                        case 7: toggleOrientation(); break;
                     }
                 })
                 .setNegativeButton("Close", null)

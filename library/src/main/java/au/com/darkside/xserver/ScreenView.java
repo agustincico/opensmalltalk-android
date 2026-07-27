@@ -259,6 +259,19 @@ public class ScreenView extends View {
     // gestures, so it's OFF by default; re-enable from the options menu.
     private boolean _enableLongPressMenu = false;
 
+    // Precise pointer: when > 0, the X pointer sits this many physical px ABOVE the
+    // finger so the finger doesn't occlude small targets (window close box, menus).
+    private int _touchOffsetY = 0;
+    // Trackpad mode: the finger drives a *relative* cursor (laptop-trackpad style):
+    // slide = move the cursor (hover → submenus open, precise aim), quick tap = click
+    // at the cursor, press-and-hold-then-drag = drag with the button held.
+    private boolean _trackpadMode = false;
+    private float _tpLastX, _tpLastY, _tpDownX, _tpDownY;
+    private boolean _tpMoved, _tpDragging;
+    private int _touchSlop = 0;
+    private final Handler _tpHandler = new Handler(Looper.getMainLooper());
+    private Runnable _tpLongPress;
+
     private static final int ACTION_CANCEL = 0;
     private static final int ACTION_CTRL_C = 1;
     private static final int ACTION_CTRL_V = 2;
@@ -362,8 +375,18 @@ public class ScreenView extends View {
                         return false;
 
                     blank(false); // Reset the screen saver.
-                    // map physical touch -> logical X coords (accounts for display zoom)
-                    updatePointerPosition((int) (event.getX() / _displayScale), (int) (event.getY() / _displayScale), 0);
+
+                    // Trackpad mode drives a relative cursor — handled entirely below.
+                    if (_trackpadMode) {
+                        handleTrackpadTouch(event);
+                        return false;
+                    }
+
+                    // Direct touch: map physical touch -> logical X coords (accounts for
+                    // display zoom). With "precise pointer" on, lift the pointer a bit
+                    // above the finger so it doesn't occlude the target.
+                    updatePointerPosition((int) (event.getX() / _displayScale),
+                            (int) ((event.getY() - _touchOffsetY) / _displayScale), 0);
 
                     if (_enableTouchClicks) {
                         if (event.getActionMasked() == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0)
@@ -1002,6 +1025,96 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     public boolean isShowPointer() { return _showPointer; }
     public boolean isLongPressMenuEnabled() { return _enableLongPressMenu; }
     public boolean isSharedClipboard() { return _sharedClipboard; }
+    public boolean isTrackpadMode() { return _trackpadMode; }
+    public boolean isPreciseTouch() { return _touchOffsetY != 0; }
+
+    /** Toggle trackpad mode (relative cursor). */
+    public boolean toggleTrackpadMode() {
+        _trackpadMode = !_trackpadMode;
+        _tpDragging = false; _tpMoved = false;
+        if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+        return _trackpadMode;
+    }
+
+    /** Toggle the precise-pointer offset (direct-touch mode). */
+    public boolean togglePreciseTouch() {
+        _touchOffsetY = (_touchOffsetY == 0)
+                ? Math.round(48 * getResources().getDisplayMetrics().density) : 0;
+        return _touchOffsetY != 0;
+    }
+
+    /**
+     * Trackpad-style touch: the finger drives a RELATIVE cursor (like a laptop
+     * trackpad), so you can position precisely and hover (which opens Cuis
+     * submenus) without your finger occluding the target.
+     *   • slide            → move the cursor (hover, no button)
+     *   • quick tap        → left-click at the cursor
+     *   • hold ~300ms then drag → button-1 drag (move windows, select text)
+     *   • second finger    → right-click at the cursor
+     */
+    private void handleTrackpadTouch(MotionEvent event) {
+        if (_touchSlop == 0)
+            _touchSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        final float scale = _displayScale;
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                _tpDownX = _tpLastX = event.getX();
+                _tpDownY = _tpLastY = event.getY();
+                _tpMoved = false;
+                _tpDragging = false;
+                if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+                _tpLongPress = () -> {
+                    synchronized (_xServer) {
+                        if (!_tpMoved && !_tpDragging && _rootWindow != null) {
+                            _tpDragging = true;           // held still → start a button-1 drag
+                            updatePointerButtons(1, true);
+                        }
+                    }
+                };
+                _tpHandler.postDelayed(_tpLongPress, 350);
+                break;
+            case MotionEvent.ACTION_MOVE: {
+                float dx = event.getX() - _tpLastX;
+                float dy = event.getY() - _tpLastY;
+                _tpLastX = event.getX();
+                _tpLastY = event.getY();
+                int lw = Math.max(1, Math.round(getWidth() / scale));
+                int lh = Math.max(1, Math.round(getHeight() / scale));
+                int nx = Math.max(0, Math.min(lw - 1, _currentCursorX + Math.round(dx / scale)));
+                int ny = Math.max(0, Math.min(lh - 1, _currentCursorY + Math.round(dy / scale)));
+                updatePointerPosition(nx, ny, 0);
+                double dist = Math.hypot(event.getX() - _tpDownX, event.getY() - _tpDownY);
+                // Any real movement ⇒ it's a slide, not a still hold: cancel the
+                // pending hold-to-drag with a SMALL threshold so even a slow, precise
+                // slide never accidentally starts a drag (dragging = press + pause).
+                if (!_tpDragging && _tpLongPress != null
+                        && dist > 10 * getResources().getDisplayMetrics().density) {
+                    _tpHandler.removeCallbacks(_tpLongPress);
+                    _tpLongPress = null;
+                }
+                if (dist > _touchSlop) _tpMoved = true;    // for the tap-vs-slide click decision
+                break;
+            }
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+                if (_tpDragging) { updatePointerButtons(1, false); _tpDragging = false; }
+                updatePointerButtons(3, true);            // second finger → right-click
+                updatePointerButtons(3, false);
+                _tpMoved = true;                          // suppress the click on lift
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+                if (_tpDragging) {
+                    updatePointerButtons(1, false);       // end the drag
+                    _tpDragging = false;
+                } else if (!_tpMoved) {
+                    updatePointerButtons(1, true);        // quick tap → click at the cursor
+                    updatePointerButtons(1, false);
+                }
+                break;
+        }
+    }
 
     private void movePointer(int x, int y, Cursor cursor) {
         _drawnCursor = null;
