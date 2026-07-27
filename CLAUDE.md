@@ -172,6 +172,17 @@ From the README "Known limitations" plus what the loop surfaced:
    (keyboard) buttons sat over the world; now they collapse to a minimal `‹` handle
    in the bottom-right corner that slides them out on tap. Doubles as an **escape
    hatch** from a blank-rendering image (☰ → *Load image…* still works).
+   The ☰ button opens a **curated, opaque** options dialog (`showOptionsDialog`),
+   not the old translucent Android panel full of X-server legacy items: Load image,
+   Zoom, Trackpad mode, Precise pointer, Mouse pointer, Shared clipboard, Long-press
+   menu, Screen orientation. **Keyboard** no longer hides what you type — a
+   global-layout listener pans the X view up to keep the caret above the IME.
+   **Finger control** (both opt-in toggles, default off): *Trackpad mode* — the
+   finger drives a relative cursor (slide=move+hover→opens submenus, tap=click at
+   the cursor, press+pause+drag=drag, 2 fingers=right-click); *Precise pointer* —
+   the pointer sits ~48dp above the finger so it doesn't occlude small targets
+   (window close box). Follow-up: persist these toggles (they reset each restart)
+   and tune trackpad with real-finger feedback. See `ScreenView.handleTrackpadTouch`.
 6. **Save Image works (to filesDir).** Tested on Cuis 7.5: World menu → *Save
    Image* writes `filesDir/Cuis.image` (size/mtime change, Transcript logs
    `----SNAPSHOT----`, no permission error) and the saved state boots on relaunch.
