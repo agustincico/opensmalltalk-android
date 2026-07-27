@@ -138,8 +138,13 @@ From the README "Known limitations" plus what the loop surfaced:
    physical→logical so hits stay precise. The upscale means WHOLE-number zooms
    (2×, 3×) are pixel-crisp while fractional ones (1.75×, 2.25×) look soft — so the
    auto-default rounds to 0.5 (→2.0× on a 440dpi phone) and the ☰ *Zoom* item opens
-   a picker (1.0–4.0×, whole numbers tagged "sharp"). Big+native-sharp would need
-   image-side HiDPI (Cuis/Squeak UI scale). Follow-ups: persist the choice
+   a picker (1.0–4.0×, whole numbers tagged "sharp"). A **"Smooth zoom"** toggle
+   switches the upscale to bilinear (better for image-heavy content that looks
+   blocky with nearest). Big+native-sharp would need image-side HiDPI (Cuis/Squeak
+   UI scale). **Responsive images** (e.g. Dialogo) re-lay-out to the logical screen
+   size, so zoom just lowers their render resolution (blocky) instead of enlarging —
+   they're sharp at 1×; the upscale-zoom only enlarges FIXED-size worlds.
+   Follow-ups: persist the choice
    (SharedPreferences); long-press-to-aim precision cursor (now the Precise-pointer
    toggle + Trackpad mode, see #5).
 4. **~~No runtime image picker~~ — DONE**, extended into a **startup chooser**.
@@ -187,6 +192,11 @@ From the README "Known limitations" plus what the loop surfaced:
    the pointer sits ~48dp above the finger so it doesn't occlude small targets
    (window close box). Follow-up: persist these toggles (they reset each restart)
    and tune trackpad with real-finger feedback. See `ScreenView.handleTrackpadTouch`.
+   **Right-click made easy:** a **⊙** button in the pill arms the next tap as a
+   right-click (button 3) for context menus; the two-finger-tap right-click was also
+   fixed (release the first finger's button-1 before sending button-3). Window
+   resize/drag works (title-drag moves a window); grabbing THIN resize edges / pane
+   dividers is a precision problem — use Precise-pointer / Trackpad mode.
 6. **Save Image works (to filesDir).** Tested on Cuis 7.5: World menu → *Save
    Image* writes `filesDir/Cuis.image` (size/mtime change, Transcript logs
    `----SNAPSHOT----`, no permission error) and the saved state boots on relaunch.
