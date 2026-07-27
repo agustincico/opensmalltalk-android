@@ -998,6 +998,11 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
         return _showPointer;
     }
 
+    // State getters (used to label the curated options menu).
+    public boolean isShowPointer() { return _showPointer; }
+    public boolean isLongPressMenuEnabled() { return _enableLongPressMenu; }
+    public boolean isSharedClipboard() { return _sharedClipboard; }
+
     private void movePointer(int x, int y, Cursor cursor) {
         _drawnCursor = null;
         _currentCursor = cursor;

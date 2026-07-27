@@ -246,6 +246,31 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // this there's no way to reach "Load image…" or bring up the keyboard.
         addFloatingControls(fl);
 
+        // Keep what you're typing visible: the soft keyboard overlays the lower half
+        // and would hide the text you're editing. When it's up, pan the X view up
+        // just enough to lift the pointer/caret row above the keyboard (and reset
+        // when it's dismissed). We don't use adjustResize — resizing the view would
+        // resize the whole X display and reflow the Smalltalk world.
+        fl.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
+            if (_screenView == null) return;
+            int viewH = _screenView.getHeight();
+            if (viewH <= 0) return;
+            // Classic keyboard-height detection (compileSdk 29 has no WindowInsets.Type):
+            // the visible display frame shrinks by the IME height when it's up.
+            android.graphics.Rect r = new android.graphics.Rect();
+            _screenView.getWindowVisibleDisplayFrame(r);
+            int imeH = Math.max(0, _screenView.getRootView().getHeight() - r.bottom);
+            float ty = 0f;
+            if (imeH > viewH * 0.15f) {  // keyboard is up
+                float scale = _screenView.getDisplayScale();
+                int caretY = Math.round(_screenView.getPointerY() * scale);  // physical caret y
+                int keyboardTop = viewH - imeH;
+                int over = caretY - (keyboardTop - dp(28));
+                if (over > 0) ty = -over;
+            }
+            if (_screenView.getTranslationY() != ty) _screenView.setTranslationY(ty);
+        });
+
         PowerManager pm;
 
         pm = (PowerManager) getSystemService(Context.POWER_SERVICE);
@@ -676,7 +701,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         bar.setPadding(dp(4), dp(2), dp(4), dp(2));
 
         Button menuBtn = makeIconButton("☰");   // options menu (Load image…, Zoom, …)
-        menuBtn.setOnClickListener(v -> openOptionsMenu());
+        menuBtn.setOnClickListener(v -> showOptionsDialog());
         Button kbdBtn = makeIconButton("⌨");    // toggle the soft keyboard
         kbdBtn.setOnClickListener(v -> toggleKeyboard());
         // Collapsed by default so the menu doesn't sit over the image — only the
@@ -755,6 +780,48 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             byte[] buf = new byte[65536]; int n;
             while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
         }
+    }
+
+    /**
+     * The ☰ options menu — a curated, opaque dialog (the old Android options panel
+     * was translucent and hard to read over the Smalltalk world, and full of X-server
+     * legacy items: IP address, Access control, Remote login, Window Manager, etc.).
+     * Only what a Smalltalk-on-phone user needs is kept here.
+     */
+    private void showOptionsDialog() {
+        final ScreenView sv = _xServer.getScreen();
+        float zoom = 1.0f;
+        try { zoom = sv.getDisplayScale(); } catch (Exception e) { }
+        final String[] labels = {
+                "Load image…",
+                "Zoom (" + zoom + "×)",
+                "Mouse pointer: " + (sv.isShowPointer() ? "on" : "off"),
+                "Shared clipboard: " + (sv.isSharedClipboard() ? "on" : "off"),
+                "Long-press menu: " + (sv.isLongPressMenuEnabled() ? "on" : "off"),
+                "Screen orientation",
+        };
+        new AlertDialog.Builder(this)
+                .setTitle("Options")
+                .setItems(labels, (dialog, which) -> {
+                    switch (which) {
+                        case 0: showLoadImageDialog(); break;
+                        case 1: sv.cycleDisplayScale(); showOptionsDialog(); break;  // reopen to keep cycling
+                        case 2: sv.toggleShowPointer(); break;
+                        case 3: sv.toggleSharedClipboard(); break;
+                        case 4: sv.toggleLongPressMenu(); break;
+                        case 5: toggleOrientation(); break;
+                    }
+                })
+                .setNegativeButton("Close", null)
+                .show();
+    }
+
+    /** Flip between portrait and landscape (locks to the chosen one). */
+    private void toggleOrientation() {
+        if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE)
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
+        else
+            setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
     }
 
     /** "Load image…" → choose: download the latest Squeak or Cuis, or browse the device. */
