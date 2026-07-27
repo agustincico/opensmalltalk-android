@@ -271,6 +271,13 @@ public class ScreenView extends View {
     private int _touchSlop = 0;
     private final Handler _tpHandler = new Handler(Looper.getMainLooper());
     private Runnable _tpLongPress;
+    // Right-click: the ⊙ button arms this so the NEXT tap is a right-click (button 3),
+    // an easy way to get context menus (two-finger tap also right-clicks).
+    private boolean _armRightClick = false;
+    // Smooth zoom: bilinear upscale (better for image-heavy images like Dialogo, which
+    // look blocky with the default nearest-neighbour upscale). Text is crisper with
+    // nearest, so it's off by default.
+    private boolean _smoothZoom = false;
 
     private static final int ACTION_CANCEL = 0;
     private static final int ACTION_CTRL_C = 1;
@@ -391,15 +398,23 @@ public class ScreenView extends View {
                             (int) ((event.getY() - _touchOffsetY) / _displayScale), 0);
 
                     if (_enableTouchClicks) {
-                        if (event.getActionMasked() == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0)
-                            updatePointerButtons(1, true);
-                        if (event.getActionMasked() == MotionEvent.ACTION_UP && event.getActionIndex() == 0)
+                        final int action = event.getActionMasked();
+                        // Primary finger = left button, or right button for ONE tap
+                        // after the ⊙ (right-click) button is armed.
+                        if (action == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0)
+                            updatePointerButtons(_armRightClick ? 3 : 1, true);
+                        if (action == MotionEvent.ACTION_UP && event.getActionIndex() == 0) {
+                            updatePointerButtons(_armRightClick ? 3 : 1, false);
+                            _armRightClick = false;
+                        }
+                        // Two-finger tap = right-click. Drop the first finger's left
+                        // press first so Smalltalk gets a clean button-3 click (this is
+                        // why the old two-finger gesture was unreliable).
+                        if (action == MotionEvent.ACTION_POINTER_DOWN && event.getActionIndex() == 1) {
                             updatePointerButtons(1, false);
-                        if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN && event.getActionIndex() == 1)
                             updatePointerButtons(3, true);
-                        if ((event.getActionMasked() == MotionEvent.ACTION_POINTER_UP
-                                || event.getActionMasked() == MotionEvent.ACTION_CANCEL) && event.getActionIndex() == 1)
                             updatePointerButtons(3, false);
+                        }
                     }
                 }
 
@@ -837,6 +852,9 @@ public class ScreenView extends View {
             if (zoom) {
                 canvas.save();
                 canvas.scale(_displayScale, _displayScale);
+                // Smooth (bilinear) upscale for image-heavy content; nearest-neighbour
+                // (crisp, default) for text. Only matters when zoomed.
+                _paint.setFilterBitmap(_smoothZoom);
             }
             _rootWindow.draw(canvas, _paint);
             // cursor is in logical (X) coords; drawn inside the scaled canvas it
@@ -1029,6 +1047,17 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     public boolean isSharedClipboard() { return _sharedClipboard; }
     public boolean isTrackpadMode() { return _trackpadMode; }
     public boolean isPreciseTouch() { return _touchOffsetY != 0; }
+    public boolean isSmoothZoom() { return _smoothZoom; }
+
+    /** Arm the next tap to be a right-click (button 3). */
+    public void armRightClick() { _armRightClick = true; }
+
+    /** Toggle bilinear (smooth) vs nearest-neighbour (crisp) zoom upscaling. */
+    public boolean toggleSmoothZoom() {
+        _smoothZoom = !_smoothZoom;
+        postInvalidate();
+        return _smoothZoom;
+    }
 
     /** Toggle trackpad mode (relative cursor). */
     public boolean toggleTrackpadMode() {

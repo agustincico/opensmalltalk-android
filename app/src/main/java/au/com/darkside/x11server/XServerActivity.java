@@ -704,21 +704,29 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         menuBtn.setOnClickListener(v -> showOptionsDialog());
         Button kbdBtn = makeIconButton("⌨");    // toggle the soft keyboard
         kbdBtn.setOnClickListener(v -> toggleKeyboard());
+        Button rclickBtn = makeIconButton("⊙"); // arm the next tap as a right-click
+        rclickBtn.setOnClickListener(v -> {
+            _xServer.getScreen().armRightClick();
+            Toast.makeText(this, "Next tap = right-click (context menu)", Toast.LENGTH_SHORT).show();
+        });
         // Collapsed by default so the menu doesn't sit over the image — only the
         // small handle shows; tapping it slides the buttons out.
         menuBtn.setVisibility(View.GONE);
         kbdBtn.setVisibility(View.GONE);
+        rclickBtn.setVisibility(View.GONE);
 
         final Button handle = makeIconButton("‹");  // the minimal always-visible tab
         handle.setOnClickListener(v -> {
             _controlsExpanded = !_controlsExpanded;
             menuBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
             kbdBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
+            rclickBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
             handle.setText(_controlsExpanded ? "›" : "‹");
         });
 
         bar.addView(menuBtn);
         bar.addView(kbdBtn);
+        bar.addView(rclickBtn);
         bar.addView(handle);
 
         // Bottom-right corner, out of the way of the Smalltalk world/menus.
@@ -795,6 +803,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         final String[] labels = {
                 "Load image…",
                 "Zoom (" + zoom + "×)",
+                "Smooth zoom: " + (sv.isSmoothZoom() ? "on" : "off"),
                 "Trackpad mode: " + (sv.isTrackpadMode() ? "on" : "off"),
                 "Precise pointer: " + (sv.isPreciseTouch() ? "on" : "off"),
                 "Mouse pointer: " + (sv.isShowPointer() ? "on" : "off"),
@@ -809,17 +818,24 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                         case 0: showLoadImageDialog(); break;
                         case 1: showZoomDialog(); break;
                         case 2: {
+                            boolean on = sv.toggleSmoothZoom();
+                            Toast.makeText(this, on
+                                    ? "Smooth zoom (better for images; softer text)."
+                                    : "Crisp zoom (nearest-neighbour; best for text).", Toast.LENGTH_SHORT).show();
+                            break;
+                        }
+                        case 3: {
                             boolean on = sv.toggleTrackpadMode();
                             Toast.makeText(this, on
                                     ? "Trackpad: slide to move the pointer, tap to click, hold+drag to drag."
                                     : "Trackpad off (direct touch).", Toast.LENGTH_LONG).show();
                             break;
                         }
-                        case 3: sv.togglePreciseTouch(); break;
-                        case 4: sv.toggleShowPointer(); break;
-                        case 5: sv.toggleSharedClipboard(); break;
-                        case 6: sv.toggleLongPressMenu(); break;
-                        case 7: toggleOrientation(); break;
+                        case 4: sv.togglePreciseTouch(); break;
+                        case 5: sv.toggleShowPointer(); break;
+                        case 6: sv.toggleSharedClipboard(); break;
+                        case 7: sv.toggleLongPressMenu(); break;
+                        case 8: toggleOrientation(); break;
                     }
                 })
                 .setNegativeButton("Close", null)
