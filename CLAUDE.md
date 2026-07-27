@@ -132,12 +132,16 @@ From the README "Known limitations" plus what the loop surfaced:
    `libandroid-execinfo.so`, none shipped in `assets/plugins/`. No longer blocks
    fullscreen (fixed above without it); to actually load it, rebuild the plugin
    without the X session libs (SM/ICE) or ship those .so's. Low priority.
-3. **Touch/menus hard to hit with a finger** — *improved:* a **Zoom** menu item
-   (ScreenView `_displayScale`, cycles 1.0/1.5/2.0/2.5) renders the X screen at
-   `physical/scale` and scales up, so widgets are bigger and tappable; touch is
-   mapped physical→logical so hits stay precise. Default 1.0 (native). Possible
-   follow-ups: persist the choice (SharedPreferences) and/or a sensible default;
-   long-press-to-aim precision cursor.
+3. **Touch/menus hard to hit with a finger** — *improved:* a **Zoom** picker
+   (ScreenView `_displayScale`) renders the X screen at `physical/scale` and scales
+   it up (nearest-neighbour), so widgets are bigger and tappable; touch is mapped
+   physical→logical so hits stay precise. The upscale means WHOLE-number zooms
+   (2×, 3×) are pixel-crisp while fractional ones (1.75×, 2.25×) look soft — so the
+   auto-default rounds to 0.5 (→2.0× on a 440dpi phone) and the ☰ *Zoom* item opens
+   a picker (1.0–4.0×, whole numbers tagged "sharp"). Big+native-sharp would need
+   image-side HiDPI (Cuis/Squeak UI scale). Follow-ups: persist the choice
+   (SharedPreferences); long-press-to-aim precision cursor (now the Precise-pointer
+   toggle + Trackpad mode, see #5).
 4. **~~No runtime image picker~~ — DONE**, extended into a **startup chooser**.
    With no image chosen yet (no `.custom_image` marker) the app shows a **Load
    image** dialog on launch instead of auto-booting the bundled Cuis: *Latest
