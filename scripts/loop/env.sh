@@ -93,7 +93,9 @@ export ADB EMULATOR
 # emulator), default the whole loop to the emulator so it doesn't error with
 # "more than one device". Override by exporting ANDROID_SERIAL yourself.
 if [ -z "${ANDROID_SERIAL:-}" ]; then
-  _emu="$("$ADB" devices 2>/dev/null | grep -E '^emulator-[0-9]+[[:space:]]+device' | head -1 | awk '{print $1}')"
+  # `|| true`: with no emulator running the grep exits 1, which under a caller's
+  # `set -euo pipefail` would abort the whole script before it can boot one.
+  _emu="$("$ADB" devices 2>/dev/null | grep -E '^emulator-[0-9]+[[:space:]]+device' | head -1 | awk '{print $1}' || true)"
   [ -n "$_emu" ] && export ANDROID_SERIAL="$_emu"
 fi
 
