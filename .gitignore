@@ -43,3 +43,6 @@ google-services.json
 
 # Dev loop artifacts (screenshots, logs, emulator/scrcpy logs)
 .loop/
+
+# Release signing credentials (see app/keystore.properties.example)
+keystore.properties
