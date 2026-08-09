@@ -6,7 +6,7 @@ Run any OpenSmalltalk image (Cuis, Squeak) or custom project (like [Dialogo](htt
 
 ## Status
 
-Working alpha, actively developed. The app is called **Open Smalltalk VM** on the device.
+Working alpha, actively developed. The app is called **OpenSmalltalk** on the device.
 
 Verified on a Samsung Galaxy A12 (ARM64, Android 10) and on an ARM64 emulator
 (`system-images;android-30;google_apis;arm64-v8a`).
@@ -29,18 +29,24 @@ Verified on a Samsung Galaxy A12 (ARM64, Android 10) and on an ARM64 emulator
 
 ## Quick start (phone)
 
-1. Download the APK from [Releases](https://github.com/agustincico/opensmalltalk-android/releases)
-   (or build it — see [Building from source](#building-from-source)).
-2. Enable "Install from unknown sources" and install it.
-3. Open **Open Smalltalk VM**. On first launch it shows a **Load image** dialog — it does
+1. Download the signed APK from
+   [**Releases**](https://github.com/agustincico/opensmalltalk-android/releases)
+   (or build it yourself — see [Building from source](#building-from-source)).
+2. Open the downloaded file and allow **"Install from unknown sources"** when Android asks.
+3. Open **OpenSmalltalk**. On first launch it shows a **Load image** dialog — it does
    *not* auto-boot anything:
-   - **Latest Squeak (download)** — newest `Squeak6.0-<build>-64bit` from files.squeak.org
+   - **Squeak (download)** — newest `Squeak6.0-<build>-64bit` from files.squeak.org
    - **Cuis 7.5 (download)** — the stable Cuis base (see [Loading images](#loading-images))
+   - **Cuis University (download)** — the latest [Cuis University](https://sites.google.com/view/cuis-university)
+     release (image + changes + sources from its platform bundle)
    - **From device…** — pick a `.image` you already have (no storage permission needed)
-   - **Bundled Cuis (offline)** — only if the APK was built with a bundled image
 4. Change image any time: **☰ → Load image…**
 
 Downloads need internet (the app requests `INTERNET`; the only other permission is `WAKE_LOCK`).
+
+> **Auto-updates:** point [Obtainium](https://github.com/ImranR98/Obtainium) at this repo's
+> URL and it will offer each new GitHub release as an in-place update (all releases are
+> signed with the same key).
 
 ## Using it with a finger
 
@@ -101,6 +107,9 @@ Zoom renders the X screen at `physical / zoom` and scales it up with nearest-nei
 - **Downloads.** Squeak scrapes `files.squeak.org/6.0/` for the newest 64-bit build.
   Cuis is **pinned to the stable base tag** `#BaseForCuis7.6` (Cuis 7.5-7775 + `Cuis7.4.sources`)
   because Cuis master/7.9 boots but renders blank on the embedded X server.
+  Cuis University resolves the latest release of
+  [Cuis-University/Cuis-University](https://github.com/Cuis-University/Cuis-University) and
+  extracts image + changes + sources from its platform zip.
 - **From device…** uses the Storage Access Framework (no storage permission). The sibling
   `<name>.changes` next to the picked `.image` is copied automatically.
 - Images live in the app's **private** storage (`filesDir`). **Save Image works** (verified on
@@ -205,20 +214,22 @@ JAVA_HOME=$(/usr/libexec/java_home -v 11) ./gradlew assembleDebug
 The repo is self-contained: launcher, X11 server library and the prebuilt native VM are all
 included. No submodules.
 
-### A fresh clone ships no Smalltalk image
+### No Smalltalk image ships in the APK
 
-`*.image` / `*.changes` / `*.sources` are gitignored (they are large binaries), so **a clone
-builds an APK with no bundled image** and *Bundled Cuis (offline)* will report "No bundled
-image". That's fine — use the in-app downloads. To bundle one anyway, drop a 64-bit Spur
-image into `app/src/main/assets/` as `Cuis.image` (+ `Cuis.changes`) before building, e.g.
-from [files.squeak.org/6.0](https://files.squeak.org/6.0/) or
-[Cuis-Smalltalk-Dev/CuisImage @ `#BaseForCuis7.6`](https://github.com/Cuis-Smalltalk/Cuis-Smalltalk-Dev/tree/%23BaseForCuis7.6/CuisImage).
+`*.image` / `*.changes` / `*.sources` are gitignored (they are large binaries) and the app
+deliberately bundles **no** offline image — every image is downloaded (or picked from the
+device) at first launch via the **Load image** chooser. So a fresh clone builds the exact
+same APK as the official release, and the download options (Squeak / Cuis 7.5 /
+Cuis University) are the supported way to get an image onto the device.
 
 ### Release builds
 
 `assembleRelease` works out of the box and produces an **unsigned** APK. To sign it, copy
 `app/keystore.properties.example` to `app/keystore.properties` and point it at your own
-keystore (both that file and `*.jks` are gitignored).
+keystore (both that file and `*.jks` are gitignored). The APKs on the
+[Releases](https://github.com/agustincico/opensmalltalk-android/releases) page are signed
+with the maintainer's key, so they can update each other in place; a locally-signed build
+must be installed after uninstalling the official one (different signature).
 
 ## Development
 

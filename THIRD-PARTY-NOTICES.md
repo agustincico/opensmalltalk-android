@@ -83,15 +83,20 @@ from a package list. Reproduce with the recipe in
 | Vorbis (`libvorbis.so`) | **1.3.7** | `Xiph.Org libVorbis I 20200704` |
 | Opus (`libopus.so`) | **1.5.2** | `libopus 1.5.2` |
 | libsndfile (`libsndfile.so`) | **1.2.2** | `libsndfile-1.2.2` |
-| GLib, FreeType, fontconfig | *stripped* | no version banner embedded — still need the device's `pkg list-installed` |
+| GLib (`libglib-2.0.so.0` etc.) | **2.86.1** | stripped — from the source device's Termux `pkg list-installed` (2026-08-09) |
+| FreeType (`libfreetype.so`) | **2.14.1** | stripped — same package-list capture |
+| fontconfig (`libfontconfig.so`) | **2.17.1-1** | stripped — same package-list capture |
 
-All native libraries were cross-compiled with the **Android NDK clang 19.0.1** (LLD 19.0.1),
+The three stripped libraries' versions come from the source device itself: its Termux
+`pkg list-installed` (captured 2026-08-09; the binaries were harvested 2026-07-22 from the
+same installation, so a minor point-release drift is possible but unlikely). All native
+libraries were cross-compiled with the **Android NDK clang 19.0.1** (LLD 19.0.1),
 per the compiler banner in the binaries. The VM itself is `opensmalltalk-vm` release tag
 **`r3732`**, `squeak.stack.spur` flavour; the display/sound plugins are from a `squeak.cog.spur`
 tree — see [docs/BUILDING-VM.md](docs/BUILDING-VM.md#provenance-read-from-strings-in-the-binaries).
 
 ## How to help
 
-If you can identify the remaining stripped versions (GLib, FreeType, fontconfig — e.g. from the
-Termux device that produced these binaries via `pkg list-installed`), please open a PR filling
-in the table above with the real versions and license texts.
+All shipped library versions are now identified (table above). What's still missing is the
+per-version **license texts** for redistribution-grade compliance — if you can contribute
+those (or spot a version we got wrong), please open a PR.

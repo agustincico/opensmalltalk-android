@@ -91,21 +91,23 @@ If you add or rename a plugin, update the `deps_to_load[]` list in
    only covers `squeak.stack.spur`. **Fix:** rebuild the plugins in the stack tree
    (`plugins.int` / `plugins.ext`) and confirm they load, or document the cog tree's patches.
    This also blocks fixing the known over-linked `XDisplayControlPlugin.so`.
-3. **The support libraries have no full manifest.** Harvested from a Termux install with no
-   package list or copy script. **Most versions have since been recovered** by reading the
-   binaries' embedded version banners (see the table in
-   [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md#recovered-versions-read-from-the-shipped-binaries)
-   — libpng 1.6.50, cairo 1.18.4, pango 1.57.0, HarfBuzz 12.2.0, PCRE2 10.46, expat 2.7.1,
-   D-Bus 1.16.2, FLAC 1.5.0, Vorbis 1.3.7, Opus 1.5.2, libsndfile 1.2.2; all built with Android
-   NDK clang 19.0.1). Still stripped/unknown: **GLib, FreeType, fontconfig**. **Fix:** record
-   `pkg list-installed` from that device for the stripped few, or switch to libraries built from
-   source with the NDK.
+3. **~~The support libraries have no full manifest~~ — closed.** All shipped library
+   versions are now recorded in
+   [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md#recovered-versions-read-from-the-shipped-binaries):
+   most read from the binaries' own embedded version banners (libpng 1.6.50, cairo 1.18.4,
+   pango 1.57.0, HarfBuzz 12.2.0, PCRE2 10.46, expat 2.7.1, D-Bus 1.16.2, FLAC 1.5.0,
+   Vorbis 1.3.7, Opus 1.5.2, libsndfile 1.2.2; all built with Android NDK clang 19.0.1),
+   and the three stripped ones (GLib 2.86.1, FreeType 2.14.1, fontconfig 2.17.1) from the
+   source device's Termux `pkg list-installed` (captured 2026-08-09). Remaining nice-to-have:
+   a copy script / per-version license texts, or switching to libraries built from source
+   with the NDK.
 4. **`apply-fixes-stack.sh` is GNU-`sed`-only** (BSD/macOS `sed -i` differs), and assumes
    Termux paths/toolchain.
 
-**These are recoverable only from the phone that produced the binaries** — while it still
-exists, capture `pkg list-installed`, the two VM checkouts (their `git log -1`), and
-`plugins.int`/`plugins.ext`. That single capture would close gaps 1–3.
+**Gaps 1–2 are recoverable only from the phone that produced the binaries** — while it
+still exists, capture the two VM checkouts' `git log -1` and their
+`plugins.int`/`plugins.ext`. (Gap 3 was closed 2026-08-09 with the device's
+`pkg list-installed` plus the binaries' own version banners.)
 
 ## Verifying what you have
 

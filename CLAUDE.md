@@ -111,8 +111,9 @@ macOS **bash 3.2**, so array expansions use the `${arr[@]+"${arr[@]}"}` idiom.
   silently fails. `push-image.sh` checks this. The VM happily runs Cuis 5.0/6.0/6.x
   64-bit images (verified: 4507, 6053, CuisUniversity-6350).
 - **Images are gitignored** (`*.image`/`*.changes`/`*.sources`, "download
-  separately"). The app expects `app/src/main/assets/Cuis.image` (+ `.changes`);
-  `extractAssets()` copies every top-level assets file into filesDir on first boot.
+  separately") and since 2026-08-09 **no image is bundled at all** — the chooser
+  is download-first (Squeak / Cuis 7.5 / Cuis University / From device…);
+  `extractAssets()` still copies other top-level assets (plugins) into filesDir.
 - **~~Asset-extraction race~~ — gone.** `extractAssets()` used to copy the ~22MB
   image on a background thread while the VM launched ~500ms later, so a fresh
   install could lose the race → *"Could not open the Squeak image file"*, and
@@ -156,9 +157,11 @@ From the README "Known limitations" plus what the loop surfaced:
    toggle + Trackpad mode, see #5).
 4. **~~No runtime image picker~~ — DONE**, extended into a **startup chooser**.
    With no image chosen yet (no `.custom_image` marker) the app shows a **Load
-   image** dialog on launch instead of auto-booting the bundled Cuis: *Latest
-   Squeak (download)*, *Latest Cuis (download)*, *From device…* (SAF, no storage
-   permission), *Bundled Cuis (offline)*. The same dialog is reachable any time
+   image** dialog on launch instead of auto-booting anything: *Squeak (download)*,
+   *Cuis 7.5 (download)*, *Cuis University (download)* (latest GitHub release of
+   Cuis-University/Cuis-University, windows64 zip → image+changes+sources), *From
+   device…* (SAF, no storage permission). The bundled-offline option was removed
+   2026-08-09 (app renamed **OpenSmalltalk**). The same dialog is reachable any time
    from the ☰ menu → *Load image…*. Picking one copies the `.image` (+ its sibling
    `<name>.changes`, auto-assumed for device picks) into filesDir, sets the
    `.custom_image` marker (so `extractAssets()` never clobbers it), and restarts
