@@ -139,6 +139,12 @@ Zoom renders the X screen at `physical / zoom` and scales it up with nearest-nei
   `.pck.st`, `.cs`) is copied there the moment it is written (Android 10+: via MediaStore, no
   permission needed; re-fileouts overwrite the copy), so your code leaves the app's private
   storage automatically.
+- **File in code: ☰ → *File in code (.st)…*** picks a `.st`/`.cs` from the device, copies it
+  into the image folder, and queues it to **file in when the image starts** (restart now, or
+  pick it up on the next start — the result is reported to logcat as `FILEIN OK/ERROR`).
+  This is the practical route on Android: the in-image FileList can't browse outside the
+  app sandbox, so it never reaches your Downloads. Needs an image that honours the `-s`
+  startup-script option (Cuis 6 and later; other images ignore the queued file).
 - Images live in the app's **private** storage (`filesDir`). **Save Image works** (verified on
   Cuis 7.5: the file is rewritten and the saved state boots again). Exporting the `.image`
   itself is still pending — see [Known limitations](#known-limitations).
@@ -302,6 +308,9 @@ See: https://github.com/agustincico/android-xserver-enhanced
 - **UI preferences reset on restart** (zoom, trackpad, precise pointer, …).
 - **Cuis master / 7.9 renders a blank world**; the in-app download is pinned to 7.5.
 - **Fine targets** (window resize edges, pane dividers) remain fiddly with a finger.
+- **The in-image FileList is of limited use**: it opens at `/`, which an Android app cannot
+  enumerate, and it can never browse outside the app sandbox. Use **☰ → File in code (.st)…**
+  to bring code in, and the automatic fileout export to get code out.
 - `XDisplayControlPlugin.so` fails to `dlopen` (it is over-linked against libs that aren't
   shipped). Harmless — nothing depends on it.
 - Benign log noise: `pthread_setschedparam failed` (the VM can't get realtime priority) and

@@ -130,6 +130,7 @@ public class XServerActivity extends Activity {
     private static final int ACTIVITY_ACCESS_CONTROL = 1;
     private static final int ACTIVITY_LOAD_IMAGE = 2;
     private static final int ACTIVITY_LOAD_CHANGES = 3;
+    private static final int ACTIVITY_FILE_IN = 4;
 
     private static final int DEFAULT_PORT = 6000;
     private static final String PORT_DESC_PRE = "Listening on port ";
@@ -265,6 +266,11 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 // Still alive a few seconds later ⇒ the image booted fine.
                 _screenView.postDelayed(() -> {
                     if (bootPending.delete()) Log.i(TAG, "boot healthy; cleared .boot_pending");
+                    // A queued File in… script was read at startup — remove it so
+                    // it runs exactly once (deleting the file doesn't affect the
+                    // already-scheduled evaluation).
+                    File pf = new File(filesDir, "pending-filein.st");
+                    if (pf.delete()) Log.i(TAG, "consumed pending-filein.st");
                 }, 7000);
 
                 // Copy fileouts (.st/.cs) the image writes into the user-visible
@@ -665,6 +671,11 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             setAccessControl();
             return;
         }
+        if (requestCode == ACTIVITY_FILE_IN) {
+            if (resultCode == RESULT_OK && data != null && data.getData() != null)
+                handleFileInPick(data.getData());
+            return;
+        }
         if (requestCode == ACTIVITY_LOAD_IMAGE) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 Uri imgUri = data.getData();
@@ -847,6 +858,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         try { zoom = sv.getDisplayScale(); } catch (Exception e) { }
         final String[] labels = {
                 "Load image…",
+                "File in code (.st)…",
                 "Zoom (" + zoom + "×)",
                 "Smooth zoom: " + (sv.isSmoothZoom() ? "on" : "off"),
                 "Trackpad mode: " + (sv.isTrackpadMode() ? "on" : "off"),
@@ -861,26 +873,27 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 .setItems(labels, (dialog, which) -> {
                     switch (which) {
                         case 0: showLoadImageDialog(); break;
-                        case 1: showZoomDialog(); break;
-                        case 2: {
+                        case 1: launchFileInPicker(); break;
+                        case 2: showZoomDialog(); break;
+                        case 3: {
                             boolean on = sv.toggleSmoothZoom();
                             Toast.makeText(this, on
                                     ? "Smooth zoom (better for images; softer text)."
                                     : "Crisp zoom (nearest-neighbour; best for text).", Toast.LENGTH_SHORT).show();
                             break;
                         }
-                        case 3: {
+                        case 4: {
                             boolean on = sv.toggleTrackpadMode();
                             Toast.makeText(this, on
                                     ? "Trackpad: slide to move the pointer, tap to click, hold+drag to drag."
                                     : "Trackpad off (direct touch).", Toast.LENGTH_LONG).show();
                             break;
                         }
-                        case 4: sv.togglePreciseTouch(); break;
-                        case 5: sv.toggleShowPointer(); break;
-                        case 6: sv.toggleSharedClipboard(); break;
-                        case 7: sv.toggleLongPressMenu(); break;
-                        case 8: toggleOrientation(); break;
+                        case 5: sv.togglePreciseTouch(); break;
+                        case 6: sv.toggleShowPointer(); break;
+                        case 7: sv.toggleSharedClipboard(); break;
+                        case 8: sv.toggleLongPressMenu(); break;
+                        case 9: toggleOrientation(); break;
                     }
                 })
                 .setNegativeButton("Close", null)
@@ -1249,6 +1262,86 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         return imageName;
     }
 
+    /**
+     * "File in code (.st)…": pick a .st/.cs from the device, copy it into the image
+     * folder, and queue a startup script (pending-filein.st, see squeak_jni.c) that
+     * files it in. The image evaluates the script on its NEXT start, so the user
+     * chooses between restarting right away or picking the change up later. This is
+     * the practical route on Android: the in-image FileList can't browse outside the
+     * app sandbox, and Cuis can't enumerate "/", so it never reaches the file.
+     */
+    private void launchFileInPicker() {
+        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
+        i.addCategory(Intent.CATEGORY_OPENABLE);
+        i.setType("*/*"); // .st has no registered MIME type
+        try {
+            startActivityForResult(i, ACTIVITY_FILE_IN);
+        } catch (ActivityNotFoundException e) {
+            Toast.makeText(this, "No file picker available on this device.", Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void handleFileInPick(Uri uri) {
+        String name = displayNameForUri(uri);
+        if (name != null) name = name.trim();
+        String low = name == null ? "" : name.toLowerCase();
+        if (!(low.endsWith(".st") || low.endsWith(".cs"))) {
+            Toast.makeText(this, "Pick a Smalltalk fileout (.st or .cs).", Toast.LENGTH_LONG).show();
+            return;
+        }
+        final String fname = name;
+        File dst = new File(getFilesDir(), fname);
+        File part = new File(dst.getPath() + ".part");
+        if (!copyUriToFile(uri, part)) {
+            part.delete();
+            Toast.makeText(this, "Could not read the selected file.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        _skipExportOnce.add(fname);   // don't bounce it straight back to Downloads
+        if (!part.renameTo(dst)) {
+            part.delete();
+            Toast.makeText(this, "Could not store the selected file.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        writePendingFileIn(fname);
+        new AlertDialog.Builder(this)
+                .setTitle("File in " + fname)
+                .setMessage("The code files in when the image starts. Restart now?\n\n"
+                        + "Anything not saved in the image (Save Image) will be lost.")
+                .setPositiveButton("Restart & file in", (d, w) -> restartApp())
+                .setNegativeButton("Later", (d, w) -> Toast.makeText(this,
+                        fname + " queued — it files in on the next image start.",
+                        Toast.LENGTH_LONG).show())
+                .show();
+    }
+
+    /**
+     * Queue <filesDir>/pending-filein.st: squeak_jni.c passes it to the image via
+     * -s on the next start (Cuis 6+; other images ignore it), and the boot-healthy
+     * timer deletes it so it runs once. The script defers the fileIn until the UI
+     * is up (class definitions too early in startup are unsafe) and reports to
+     * stdout → logcat either way.
+     */
+    private void writePendingFileIn(String fileName) {
+        String quoted = fileName.replace("'", "''");
+        String script =
+                "| doIt |\n"
+              + "doIt := [ [ ('" + quoted + "' asFileEntry) readStreamDo: [ :s | s fileIn ].\n"
+              + "  StdIOWriteStream stdout nextPutAll: 'FILEIN OK " + quoted + "'; newLine; flush ]\n"
+              + "  on: Error do: [ :e |\n"
+              + "    StdIOWriteStream stdout nextPutAll: 'FILEIN ERROR ', (e messageText ifNil: [ '?' ]); newLine; flush ] ].\n"
+              + "(Smalltalk includesKey: #UISupervisor)\n"
+              + "  ifTrue: [ UISupervisor whenUIinSafeState: doIt ]\n"
+              + "  ifFalse: [ doIt value ].\n";
+        try (FileOutputStream out = new FileOutputStream(
+                new File(getFilesDir(), "pending-filein.st"))) {
+            out.write(script.getBytes("UTF-8"));
+        } catch (IOException e) {
+            Log.e(TAG, "could not write pending-filein.st", e);
+            Toast.makeText(this, "Could not queue the file-in.", Toast.LENGTH_LONG).show();
+        }
+    }
+
     /** Let the user pick a Smalltalk .image from device storage (SAF — no permission needed). */
     private void launchImagePicker() {
         Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
@@ -1519,6 +1612,10 @@ private void extractAssets() {
             new java.util.concurrent.CopyOnWriteArrayList<>();
     private final Set<String> _watchedDirs =
             java.util.Collections.synchronizedSet(new HashSet<>());
+    // Names the fileout watcher should skip once: files WE just imported via
+    // "File in…" (re-exporting them to Downloads immediately would be noise).
+    private final Set<String> _skipExportOnce =
+            java.util.Collections.synchronizedSet(new HashSet<>());
 
     private void startFileoutWatcher() {
         if (!_fileoutObservers.isEmpty()) return;   // already watching
@@ -1575,7 +1672,8 @@ private void extractAssets() {
     private void maybeExportFileout(File f, String name) {
         String low = name.toLowerCase();
         boolean isFileout = low.endsWith(".st") || low.endsWith(".cs");
-        if (!isFileout || name.equals("dev-tests.st")) return;
+        if (!isFileout || name.equals("dev-tests.st") || name.equals("pending-filein.st")) return;
+        if (_skipExportOnce.remove(name)) return;   // a file WE just imported
         if (!f.isFile() || f.length() == 0) return;
         exportToDownloads(f);
     }

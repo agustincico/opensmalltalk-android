@@ -117,6 +117,17 @@ void* run_squeak_thread(void* arg) {
     snprintf(dev_st_path, sizeof(dev_st_path), "%s/dev-tests.st", g_files_dir);
     int have_dev_st = (access(dev_st_path, R_OK) == 0);
 
+    // Hook de "File in…" (opcional): la app escribe <filesDir>/pending-filein.st
+    // cuando el usuario elige un .st para file-in; tiene prioridad sobre
+    // dev-tests.st y la app lo borra después de un boot sano.
+    static char filein_st_path[600];
+    snprintf(filein_st_path, sizeof(filein_st_path), "%s/pending-filein.st", g_files_dir);
+    if (access(filein_st_path, R_OK) == 0) {
+        snprintf(dev_st_path, sizeof(dev_st_path), "%s", filein_st_path);
+        have_dev_st = 1;
+        LOG("pending-filein.st encontrado; se usara como script -s");
+    }
+
     char *argv[12];
     int argc = 0;
     argv[argc++] = (char*)"squeak";

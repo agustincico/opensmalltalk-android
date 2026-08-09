@@ -223,6 +223,19 @@ From the README "Known limitations" plus what the loop surfaced:
    MIME type on insert — text/plain makes MediaStore rename `.st` → `.st.txt`).
    **Remaining gap:** the `.image` itself still can't leave the phone (a future
    "Export image" share-sheet / SAF copy).
+   **File in (2026-08-09):** ☰ → *File in code (.st)…* → SAF pick → copy into
+   filesDir → write `pending-filein.st`, which `squeak_jni.c` passes via `-s`
+   (priority over dev-tests.st) on the next start; the script defers the fileIn
+   with `UISupervisor whenUIinSafeState:` (class defs too early in startup are
+   unsafe) and prints `FILEIN OK/ERROR` to stdout→logcat; the boot-healthy timer
+   deletes it (runs once). Verified on Cuis 7.5 (probe .st evaluated, value read
+   back). Cuis 6+ only (-s); Squeak ignores it. **Why not FileList:** it opens at
+   `/` which the app can't enumerate, and the sandbox is unreachable from it —
+   diagnosed with motionevent DOWN/MOVE/UP drags (tap alone never opens Cuis
+   submenus; press-hold-drag does). A real XDND drop (the X server as DND source
+   synthesizing XdndEnter/Position/Drop + the existing server-window selection
+   path in Selection.java) is the future no-restart route — vm-display-X11.so
+   has Xdnd compiled in.
 
 ## Open items from the 2026-08-09 repo audit
 
