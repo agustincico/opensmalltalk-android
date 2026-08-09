@@ -1,12 +1,30 @@
 # OpenSmalltalk Android
 
+[![Latest release](https://img.shields.io/github/v/release/agustincico/opensmalltalk-android?label=release&color=blue)](https://github.com/agustincico/opensmalltalk-android/releases/latest)
+
 Run any OpenSmalltalk image (Cuis, Squeak) or custom project (like [Dialogo](https://dialog.ar)) on Android — as a native APK. No Termux at runtime.
+
+**📦 [Download the signed APK from the latest release](https://github.com/agustincico/opensmalltalk-android/releases/latest)** — install it, pick an image (Squeak, Cuis, Cuis University or your own), done.
 
 ![Cuis University running on Samsung Galaxy A12](https://github.com/user-attachments/assets/78cb2c7f-c7a3-423a-a3c9-02b6d1e62064)
 
 ## Status
 
 Working alpha, actively developed. The app is called **OpenSmalltalk** on the device.
+Current release: **[v1.31](https://github.com/agustincico/opensmalltalk-android/releases/tag/v1.31)**
+(first signed APK — 2026-08-09). Recent progress, roughly newest first:
+
+- **Signed installable releases** (no more debug-mode sideloading); same key every release,
+  so they update in place — [Obtainium](https://github.com/ImranR98/Obtainium)-friendly.
+- **Download-first startup chooser**: Squeak 6.0, Cuis 7.5, **Cuis University** (new), or an
+  image from the device — nothing bundled in the APK.
+- **Full provenance of the shipped native binaries** recovered and documented
+  ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), [docs/BUILDING-VM.md](docs/BUILDING-VM.md)).
+- Crash-on-launch fixed (native error-buffer overflow); bad 32-bit images rejected up front
+  instead of crash-looping the app.
+- Finger-friendly input (trackpad mode, precise pointer, one-tap right-click ⊙), zoom picker
+  with pixel-crisp integer scaling, curated ☰ options menu, collapsible floating controls.
+- Save Image verified working; ProcessPhoenix-based restart for clean image switching.
 
 Verified on a Samsung Galaxy A12 (ARM64, Android 10) and on an ARM64 emulator
 (`system-images;android-30;google_apis;arm64-v8a`).
