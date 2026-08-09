@@ -1,107 +1,296 @@
 # OpenSmalltalk Android
 
-Run any OpenSmalltalk image (Cuis, Squeak) or custom project (like [Dialogo](https://dialog.ar)) on Android — as a native APK, no Termux required.
+Run any OpenSmalltalk image (Cuis, Squeak) or custom project (like [Dialogo](https://dialog.ar)) on Android — as a native APK. No Termux at runtime.
 
 ![Cuis University running on Samsung Galaxy A12](https://github.com/user-attachments/assets/78cb2c7f-c7a3-423a-a3c9-02b6d1e62064)
 
 ## Status
 
-Working alpha. Tested on Samsung Galaxy A12 (ARM64, Android 10) with Cuis University image.
+Working alpha, actively developed. The app is called **Open Smalltalk VM** on the device.
 
-## How it works
+Verified on a Samsung Galaxy A12 (ARM64, Android 10) and on an ARM64 emulator
+(`system-images;android-30;google_apis;arm64-v8a`).
 
-The app packages two components into a single APK:
-
-1. **OpenSmalltalk Stack VM** — compiled from source on Android/Termux for ARM64, loaded via JNI
-2. **X11 server** — embedded in the app (forked from [android-xserver-enhanced](https://github.com/agustincico/android-xserver-enhanced)), adapted to connect with the VM
-
-When launched, the app starts the X11 server, then launches the VM pointing to a Smalltalk image. The VM renders via X11 into an Android View.
-
-### Architecture
-```
-Android App (Java)
-├── XServerActivity            ← starts X11 server + launches VM
-├── android-xserver-enhanced   ← X11 server running in-process (library/)
-└── squeak_jni.c (JNI bridge)  ← connects Java layer to the VM
-Native (ARM64)
-├── libsqueak.so               ← OpenSmalltalk Stack VM
-├── vm-display-X11.so          ← VM display plugin
-├── *.so                       ← other external plugins
-└── ~50 dependency libs        ← resolved from Termux (glib, cairo, pango, X11, etc)
-```
-### Roadmap
-
-- **v1 (current):** VM via JNI + embedded X11 server
-- **v2 (future):** Replace X11 stack with a native Android display plugin — improving usability, eliminating dependencies and making the APK smaller and more robust
+| Image | Result |
+|---|---|
+| Cuis 5.0-4507, Cuis 6.0-6053, CuisUniversity-6350 | boots + runs |
+| **Cuis 7.5-7775** (what the in-app download fetches) | boots + runs |
+| **Squeak 6.0-22156 (64-bit)** | boots + runs |
+| Dialogo (custom app image) | boots + runs |
+| Cuis 7.9-8090 / master | boots but **renders a blank white world** (upstream compat issue) |
 
 ## Requirements
 
-- Android 5.1+ (API 22)
-- ARM64 processor (ARMv8)
+- **Android 5.1+** (API 22)
+- **ARM64 (arm64-v8a) device.** The VM is shipped for ARM64 only — the APK's
+  `armeabi-v7a`/`x86_64` variants contain the JNI wrapper but no VM and cannot run an image.
+- **64-bit Spur images only** (format magic `68021`, `68531` or `68533`). 32-bit / V3 images
+  (`6521`, `6505`, `6504`) are rejected up front — see [Bad images](#bad-images-cant-brick-the-app).
 
-## Quick start
+## Quick start (phone)
 
 1. Download the APK from [Releases](https://github.com/agustincico/opensmalltalk-android/releases)
-2. Enable "Install from unknown sources" on your device
-3. Install and open the app — it comes pre-loaded with Cuis University image
+   (or build it — see [Building from source](#building-from-source)).
+2. Enable "Install from unknown sources" and install it.
+3. Open **Open Smalltalk VM**. On first launch it shows a **Load image** dialog — it does
+   *not* auto-boot anything:
+   - **Latest Squeak (download)** — newest `Squeak6.0-<build>-64bit` from files.squeak.org
+   - **Cuis 7.5 (download)** — the stable Cuis base (see [Loading images](#loading-images))
+   - **From device…** — pick a `.image` you already have (no storage permission needed)
+   - **Bundled Cuis (offline)** — only if the APK was built with a bundled image
+4. Change image any time: **☰ → Load image…**
 
-To use a different image, replace `app/src/main/assets/Cuis.image` and `.changes` with your own before building.
+Downloads need internet (the app requests `INTERNET`; the only other permission is `WAKE_LOCK`).
+
+## Using it with a finger
+
+Smalltalk expects a mouse; a finger has no hover and is imprecise. The app adds:
+
+**The floating pill** (bottom-right). Collapsed to a small `‹` handle so it doesn't cover the
+world; tap it to slide out:
+
+| Button | What it does |
+|---|---|
+| **☰** | Options dialog (below) |
+| **⌨** | Show/hide the keyboard |
+| **⊙** | Arm the **next tap as a right-click** (context menus) |
+| **›** | Collapse again |
+
+The pill is also the **escape hatch**: if an image renders blank, ☰ → *Load image…* still works.
+
+**Mouse buttons from touch**
+
+| Action | Result |
+|---|---|
+| Tap | Left click |
+| **Two-finger tap** | Right click |
+| **⊙ then tap** | Right click |
+| **Volume Down** | Right click (hardware) |
+| **Volume Up** | Left click (hardware) |
+
+**Options dialog (☰)**
+
+| Item | Notes |
+|---|---|
+| **Load image…** | The chooser above |
+| **Zoom** | 1.0–4.0×. Whole numbers are marked *(sharp)* — see [Zoom](#zoom-and-sharpness) |
+| **Smooth zoom** | Bilinear upscale — better for image-heavy worlds, softer text |
+| **Trackpad mode** | Finger drives a *relative* cursor: slide = move (hover opens submenus), tap = click at the cursor, press-pause-drag = drag, two fingers = right click |
+| **Precise pointer** | Pointer sits ~48 dp above your finger so it doesn't cover small targets |
+| **Mouse pointer** | Always-visible arrow at the pointer position (on by default) |
+| **Shared clipboard** | Android ↔ Smalltalk clipboard (on by default) |
+| **Long-press menu** | The legacy CTRL+C/V/X/ESC popup (off by default — it fights Smalltalk's own press-and-hold) |
+| **Screen orientation** | Lock portrait/landscape |
+
+**Tips.** Thin targets (window resize edges, pane dividers) are still fiddly — turn on
+*Precise pointer* or *Trackpad mode*. The soft keyboard pans the world up so the caret stays
+visible while you type.
+
+### Zoom and sharpness
+
+Zoom renders the X screen at `physical / zoom` and scales it up with nearest-neighbour, so:
+
+- **Whole-number zooms (2×, 3×, 4×) are pixel-crisp**; fractional ones (1.75×, 2.25×) look soft.
+  The auto-default rounds to 0.5 (a 440 dpi phone starts at 2.0×).
+- **Responsive images** (worlds that re-lay-out to the screen, e.g. Dialogo) only get *lower
+  resolution* from zoom — they are sharpest at **1×**. Zoom enlarges fixed-size worlds.
+- **Smooth zoom** helps image-heavy content that looks blocky.
+
+## Loading images
+
+- **Downloads.** Squeak scrapes `files.squeak.org/6.0/` for the newest 64-bit build.
+  Cuis is **pinned to the stable base tag** `#BaseForCuis7.6` (Cuis 7.5-7775 + `Cuis7.4.sources`)
+  because Cuis master/7.9 boots but renders blank on the embedded X server.
+- **From device…** uses the Storage Access Framework (no storage permission). The sibling
+  `<name>.changes` next to the picked `.image` is copied automatically.
+- Images live in the app's **private** storage (`filesDir`). **Save Image works** (verified on
+  Cuis 7.5: the file is rewritten and the saved state boots again). There is **no export yet**
+  — see [Known limitations](#known-limitations).
+- The app boots `Cuis.image` in `filesDir`, whatever image you actually loaded.
+
+### Bad images can't brick the app
+
+A 32-bit image makes the 64-bit VM abort the process; because the choice persisted, the app
+used to die on every launch until reinstalled. Now:
+
+- 32-bit/V3 formats are rejected when picked **and** at boot;
+- a `.boot_pending` marker is written before the VM starts and cleared ~7 s later, so a boot
+  that dies early is detected and the app returns to the chooser instead of crash-looping.
+
+## How it works
+
+Two components in one APK:
+
+1. **OpenSmalltalk Stack VM** (interpreted, Spur 64-bit) — `libsqueak.so`, loaded via JNI.
+2. **X11 server** embedded in the app (fork of
+   [android-xserver-enhanced](https://github.com/agustincico/android-xserver-enhanced)),
+   rendering into an Android `View`.
+
+Boot sequence (`XServerActivity`):
+
+```
+X server starts (TCP 127.0.0.1:6000)
+  → 500 ms → is there a .custom_image marker?
+      no  → show the "Load image" chooser (the VM is never started)
+      yes → crash-loop guard (.boot_pending) + 32-bit format check
+          → prune a dangling ----STARTUP---- from the .changes tail
+          → write .boot_pending → startVMNative() → clear it after 7 s
+```
+
+The VM is launched as:
+
+```
+squeak -plugins <filesDir>/plugins -display 127.0.0.1:0 <filesDir>/Cuis.image -ud <filesDir>
+```
+
+`-ud` points Cuis's *user base directory* at the writable `filesDir`; without it Cuis 6.x/7.x
+die on `UserBaseDirectory assureExistence` at startup (Squeak and Cuis 5.0 ignore the flag).
+`cwd`, `HOME` and `TMPDIR` are also set to `filesDir`, which is why *Save Image* works.
+If `<filesDir>/dev-tests.st` exists, `-s <that file>` is appended (see
+[docs/DEV-LOOP.md](docs/DEV-LOOP.md)).
+
+### Architecture
+
+```
+Android App (Java)
+├── XServerActivity            ← X11 server + image chooser + VM launch + options UI
+├── RestartActivity            ← ":restart" process: kills and relaunches the app
+│                                (the native VM cannot re-initialise in a live process)
+├── XServerService             ← keeps the app alive with a notification
+├── android-xserver-enhanced   ← X11 server in-process (library/) — ScreenView does
+│                                rendering, zoom and touch→pointer mapping
+└── squeak_jni.c (JNI bridge)  ← preloads the plugins, dlopen()s the VM, calls its main()
+Native (ARM64)
+├── libsqueak.so               ← the OpenSmalltalk Stack VM (see note below)
+├── vm-display-X11.so          ← VM display plugin
+├── *.so                       ← other VM plugins
+└── ~50 dependency libs        ← X11/cairo/pango/glib etc. (see THIRD-PARTY-NOTICES.md)
+```
+
+> `libsqueak.so` is the VM's `squeak` executable **renamed**; the JNI bridge `dlopen()`s it and
+> enters through `dlsym(handle, "main")`.
+
+**Switching images restarts the app.** The native VM can't be re-initialised in a running
+process, so `RestartActivity` (in its own `:restart` process) kills the old process, waits for
+port 6000 to free, and launches a fresh one. Android 10+ blocks the older
+background-relaunch approaches.
 
 ## Building from source
 
 ### Prerequisites
 
-- Android SDK (API 29)
+- **JDK 11** — what `scripts/loop/build.sh` uses and the validated configuration.
+  JDK 8 will not work (the Gradle daemon needs `--add-opens`).
+- **Android SDK** with these packages:
+
+```bash
+sdkmanager "platforms;android-29" "build-tools;30.0.3" \
+           "ndk;22.0.7026061" "cmake;3.22.1" "platform-tools"
+```
+
+The NDK/CMake versions are pinned in `app/build.gradle`; AGP 4.2.2 / Gradle 7.4.2 are pinned
+in the wrapper. On Apple Silicon, NDK 22 ships x86_64 binaries — install Rosetta 2
+(`softwareupdate --install-rosetta`).
 
 ### Build the APK
+
 ```bash
 git clone https://github.com/agustincico/opensmalltalk-android
 cd opensmalltalk-android
-echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties  # adjust path to your SDK
-./gradlew assembleDebug
-# APK will be at app/build/outputs/apk/debug/app-debug.apk
+echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties   # adjust to your SDK
+JAVA_HOME=$(/usr/libexec/java_home -v 11) ./gradlew assembleDebug
+# → app/build/outputs/apk/debug/app-debug.apk
 ```
 
-The repo is self-contained — both the launcher and the X11 server library are included. No submodules needed.
+The repo is self-contained: launcher, X11 server library and the prebuilt native VM are all
+included. No submodules.
 
-### Recompile the VM (optional)
+### A fresh clone ships no Smalltalk image
 
-The compiled VM (`libsqueak.so` and external plugins) is included in the repo. If you want to recompile it from source on an Android device:
+`*.image` / `*.changes` / `*.sources` are gitignored (they are large binaries), so **a clone
+builds an APK with no bundled image** and *Bundled Cuis (offline)* will report "No bundled
+image". That's fine — use the in-app downloads. To bundle one anyway, drop a 64-bit Spur
+image into `app/src/main/assets/` as `Cuis.image` (+ `Cuis.changes`) before building, e.g.
+from [files.squeak.org/6.0](https://files.squeak.org/6.0/) or
+[Cuis-Smalltalk-Dev/CuisImage @ `#BaseForCuis7.6`](https://github.com/Cuis-Smalltalk/Cuis-Smalltalk-Dev/tree/%23BaseForCuis7.6/CuisImage).
 
-1. Install Termux on your Android device
-2. Clone [opensmalltalk-vm](https://github.com/OpenSmalltalk/opensmalltalk-vm)
-3. Run the fixes script from this repo:
+### Release builds
+
+`assembleRelease` works out of the box and produces an **unsigned** APK. To sign it, copy
+`app/keystore.properties.example` to `app/keystore.properties` and point it at your own
+keystore (both that file and `*.jks` are gitignored).
+
+## Development
+
+There is a low-intervention dev loop (build → headless ARM64 emulator → deploy → screenshot +
+logcat → drive real touch/keys), plus a Smalltalk text-test hook whose results land in logcat.
+
 ```bash
-   bash scripts/apply-fixes-stack.sh
+./scripts/loop/loop.sh              # full cycle
+./scripts/loop/loop.sh --observe-only
 ```
-4. Follow the steps printed at the end of the script
 
-The script documents 8 fixes required to compile the standard Linux VM on Android/Termux.
+See **[docs/DEV-LOOP.md](docs/DEV-LOOP.md)**. Working notes, design rationale and the detailed
+backlog live in [CLAUDE.md](CLAUDE.md).
+
+## Rebuilding the VM
+
+The prebuilt VM and plugins are committed. Rebuilding them is **partially reproducible** —
+read **[docs/BUILDING-VM.md](docs/BUILDING-VM.md)**, which documents what the shipped binaries
+actually are, how they were produced (Termux on an ARM64 phone), and precisely which parts are
+not yet reproducible.
 
 ## X11 server fork
 
-This project uses a modified version of [android-xserver-enhanced](https://github.com/ZhymabekRoman/android-xserver-enhanced).
+Modified from [android-xserver-enhanced](https://github.com/ZhymabekRoman/android-xserver-enhanced).
 Key changes for OpenSmalltalk compatibility:
 
-- **TrueColor 32bpp visual** — Squeak/Cuis VM requires Visual class 4, depth 32; any other setting causes a blank screen
+- **TrueColor 32bpp visual** — the Squeak/Cuis VM requires Visual class 4, depth 32; anything
+  else gives a blank screen
 - **Public `processRequest()`** — exposed for external dispatch
-- **Dynamic resize handling** — sends `ConfigureNotify` to clients when screen size changes at runtime
+- **Dynamic resize handling** — sends `ConfigureNotify` when the screen size changes, and
+  applies the initial resize once a client maps a window (fullscreen from the first launch)
+- **Touch/zoom layer** — display scaling, touch→pointer mapping, trackpad mode, an
+  always-visible pointer, and IME-aware panning
 
 See: https://github.com/agustincico/android-xserver-enhanced
 
-## Known limitations (v1)
+## Known limitations
 
-- Image file is bundled in the APK — no runtime image picker yet
-- File write errors may occur depending on Android storage permissions
-- App icon is placeholder (still shows X server logo)
-- Touch interaction is rough — menus are hard to tap with a finger
-- Fullscreen only applies after rotating the screen once
+- **ARM64 only**; images must be 64-bit Spur.
+- **No image export.** The image lives in private app storage, so you can't copy your saved
+  work off the device yet; and only `Cuis.image` is booted (*Save Image as…* under another
+  name won't be picked up).
+- **UI preferences reset on restart** (zoom, trackpad, precise pointer, …).
+- **Cuis master / 7.9 renders a blank world**; the in-app download is pinned to 7.5.
+- **Fine targets** (window resize edges, pane dividers) remain fiddly with a finger.
+- `XDisplayControlPlugin.so` fails to `dlopen` (it is over-linked against libs that aren't
+  shipped). Harmless — nothing depends on it.
+- Benign log noise: `pthread_setschedparam failed` (the VM can't get realtime priority) and
+  `Xlib: extension "RANDR" missing` (the embedded server has no RANDR).
 
-These will be addressed in the next release of version 1.
+## Reproducibility caveats
+
+Honest disclosure of what is *not* reproducible from this repo today:
+
+- **The ~100 bundled native libraries** (X11, cairo, pango, glib, …) were harvested from a
+  **Termux** installation on an ARM64 phone. There is no package list, version manifest or
+  harvesting script, so they cannot be rebuilt or audited from source as-is.
+- **The VM and the plugins come from two different checkouts**: `libsqueak.so` was built from
+  an `opensmalltalk-vm` tree (Stack/Spur, upstream tag `r3732`), while every plugin was built
+  from a separate `opensmalltalk-vm-cog-clean` tree (`squeak.cog.spur`). Only the VM side has
+  a documented patch script.
+- **No pinned upstream commit.** `scripts/apply-fixes-stack.sh` patches some files by absolute
+  line number, so it is only valid for the revision it was written against, which isn't recorded.
+
+See [docs/BUILDING-VM.md](docs/BUILDING-VM.md) for the full picture and what would close these gaps.
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+The APK also redistributes third-party native libraries under their own licenses (LGPL and
+others). See **[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)**.
 
 ## Author
 

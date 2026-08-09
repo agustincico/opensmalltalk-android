@@ -11,6 +11,12 @@ This file documents the **low-intervention dev loop** in `scripts/loop/`: compil
 USB/phone round-trips. You watch it live via scrcpy; the loop verifies itself via
 screenshots, logcat, and Smalltalk text-tests.
 
+**Audience split.** These are *working notes* (rationale, root causes, backlog).
+User- and contributor-facing docs live elsewhere and should be kept in sync:
+`README.md` (install, use, build, caveats), `docs/DEV-LOOP.md` (this loop, for
+outside contributors), `docs/BUILDING-VM.md` (native provenance + rebuild),
+`THIRD-PARTY-NOTICES.md` (bundled binaries).
+
 ---
 
 ## Quickstart
@@ -39,7 +45,7 @@ history under `.loop/history/`, plus `emulator.log` / `scrcpy.log`.
 | `env.sh` | Sourced by all others. Auto-detects SDK + the two JDKs; defines `PKG`, `ACTIVITY`, `AVD_NAME`, `FILES_DIR`, `$ADB`, helpers. Run it directly to print resolved config. Everything overridable via env vars. |
 | `emulator.sh` | Create the arm64 AVD if missing, boot it **headless**, wait `sys.boot_completed`, `adb root`. Idempotent (reuses a running device). `--window` to see the emulator, `--wipe` for a cold boot. |
 | `build.sh` | `./gradlew assembleDebug` with **JDK 11**. Gradle is incremental (~2s no-op). Needed only when Java / X11 / C sources or embedded assets change. |
-| `deploy.sh` | Install the APK, relaunch, and defeat the asset-extraction race (see below). `--fresh` uninstalls first (clears filesDir → re-extracts assets). This path assumes the **embedded** image (`app/src/main/assets/Cuis.image`). |
+| `deploy.sh` | Install the APK and relaunch. `--fresh` uninstalls first (clears filesDir). (It used to also defeat an asset-extraction race; that's gone — the image is no longer auto-extracted, the startup chooser copies it on demand.) |
 | `observe.sh` | The two verification channels: `screencap` → `.loop/screen.png`, filtered `logcat` (Cuis/SQUEAK/SQUEAK_VM) → `.loop/logcat.txt`. Prints a health line (`vm_argv`, `image_open_fail`, `crash`) and surfaces any `DEVTEST` lines. `--stamp` keeps history, `--clear` resets the log buffer first. |
 | `input.sh` | Real touch/keyboard via adb (exercises the X-server → Cuis path): `tap X Y`, `swipe …`, `longpress …`, `text "…"`, `key ENTER|BACK|ESCAPE|…`, `back`, `home`. A tap on the empty Cuis desktop opens the World menu — a handy smoke test. |
 | `push-image.sh` | Iterate the **Smalltalk side without an APK rebuild**: `adb root` + push a `.image` (and `--changes`, `--st`) into filesDir, fixing owner + SELinux label so the app can read it, then relaunch. Warns if the image isn't 64-bit Spur. |
@@ -107,11 +113,12 @@ macOS **bash 3.2**, so array expansions use the `${arr[@]+"${arr[@]}"}` idiom.
 - **Images are gitignored** (`*.image`/`*.changes`/`*.sources`, "download
   separately"). The app expects `app/src/main/assets/Cuis.image` (+ `.changes`);
   `extractAssets()` copies every top-level assets file into filesDir on first boot.
-- **Asset-extraction race:** `extractAssets()` runs on a background thread while
-  the VM launches ~500ms later. On a fresh install the ~22MB image+changes copy
-  can lose the race → *"Could not open the Squeak image file"*. `deploy.sh` defeats
-  it: wait for the extracted image to reach full size, then relaunch. `push-image.sh`
-  sidesteps it (writes filesDir directly before launch).
+- **~~Asset-extraction race~~ — gone.** `extractAssets()` used to copy the ~22MB
+  image on a background thread while the VM launched ~500ms later, so a fresh
+  install could lose the race → *"Could not open the Squeak image file"*, and
+  `deploy.sh` had to wait for the full size then relaunch. `extractAssets()` now
+  **always skips** `Cuis.image`/`Cuis.changes` (the startup chooser copies an image
+  on demand), so there is no race and `deploy.sh` just installs + launches.
 - **Keep scrcpy on root, not toggling:** `emulator.sh` roots adbd once at boot so
   `push-image.sh` doesn't restart adbd each time (which would blink scrcpy).
 
@@ -207,6 +214,41 @@ From the README "Known limitations" plus what the loop surfaced:
    back up / transfer the `.image` off the phone, and *Save Image as…* under a
    different name won't be re-booted (the app only boots `Cuis.image`). A future
    **"Export image"** (share-sheet / copy to Downloads via SAF) would cover that.
+
+## Open items from the 2026-08-09 repo audit
+
+Fixed that day (see git log): the `last_error` strcat overflow that SIGABRT'd the
+VM startup; the empty `dlopen`/`dlsym` error branches (NULL call → SIGSEGV);
+`getLastError` never declared on the Java side; `push-image.sh` not writing
+`.custom_image` (so the documented flow showed the chooser instead of booting);
+`apply-fixes-stack.sh` resolving to the wrong directory; release keystore
+passwords committed in `app/build.gradle`.
+
+Still open, roughly by value:
+
+1. **Native provenance** — plugins come from a *different* checkout
+   (`opensmalltalk-vm-cog-clean`, `squeak.cog.spur`) than the VM
+   (`opensmalltalk-vm`, `squeak.stack.spur`, tag r3732); the ~100 support libs were
+   harvested from a Termux install with no manifest; no pinned upstream commit and
+   5 of the 8 patches are applied by absolute line number. **Capture
+   `pkg list-installed`, both checkouts' `git log -1`, and `plugins.int/.ext` from
+   that phone while it still exists** — that single capture closes most of it.
+   See `docs/BUILDING-VM.md`.
+2. **Persist UI preferences** (zoom, smooth zoom, trackpad, precise pointer,
+   pointer, clipboard, long-press) — they reset on every restart.
+3. **Export image** — `filesDir` is private, so saved work can't leave the device;
+   and only `Cuis.image` is booted, so *Save Image as…* under another name is lost.
+4. **`.boot_pending` guard is coarse** — *any* exit within 7 s (including a
+   deliberate quit) is read as a failed boot and drops the chosen image.
+5. **`abiFilters` ships `armeabi-v7a` + `x86_64`** variants that can never run the
+   VM (arm64-only `libsqueak.so`). Consider dropping them.
+6. **Legacy `onCreateOptionsMenu`** still exists and has diverged from the curated
+   dialog; `launchChangesPicker` is dead code (its result is never handled).
+7. **`Makefile`** is a stale second build path (hardcoded Homebrew SDK path) that
+   contradicts the Gradle one — delete or fix.
+8. **`jcenter()`** is still in the repository lists (deprecated/read-only).
+9. **dev-tests channel is informational** — `observe.sh` prints DEVTEST lines but a
+   failing test doesn't fail the loop.
 
 Non-issues (benign, ignore): `pthread_setschedparam failed: Operation not
 permitted` (VM can't get realtime prio; falls back to itimer) and
