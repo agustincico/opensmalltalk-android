@@ -14,11 +14,28 @@
 
 typedef int (*squeak_main_t)(int argc, char **argv);
 
-static char last_error[2048] = "";
+static char last_error[4096] = "";
 static squeak_main_t g_squeak_main = NULL;
 static char g_image_path[512] = "";
 static char g_lib_dir[512] = "";    // Directorio de la librería nativa del APK
 static char g_files_dir[512] = ""; // Directorio de archivos de la app (/data/data/pkg/files)
+
+/*
+ * Append to last_error, TRUNCATING instead of overflowing.
+ *
+ * This used to be a plain strcat() into a fixed 2048-byte buffer, called ~16
+ * times plus 3x per preloaded dependency (there are 40+). Once the accumulated
+ * text passed the end of the buffer — which a few failing dlopen()s (their
+ * dlerror() text is long) reliably caused — Android's FORTIFY killed the whole
+ * process with SIGABRT *while the VM was starting*, i.e. the app crashed on
+ * launch. Truncating keeps the diagnostics without ever aborting.
+ */
+static void err_append(const char *s) {
+    if (!s) return;
+    size_t len = strlen(last_error);
+    if (len + 1 >= sizeof(last_error)) return;   // full — drop silently
+    snprintf(last_error + len, sizeof(last_error) - len, "%s", s);
+}
 
 
 // --- 1. FUNCIÓN PARA REDIRECCIONAR STDOUT/STDERR AL LOGCAT ---
@@ -178,24 +195,24 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     LOG("Variables locales creadas");  // ← AGREGAR
     
     // 1. Obtener Native Lib Dir
-    strncpy(lib_dir_temp, lib, sizeof(lib_dir_temp));
+    snprintf(lib_dir_temp, sizeof(lib_dir_temp), "%s", lib);
     LOG("lib_dir_temp copiado");  // ← AGREGAR
     
     char *last_slash_lib = strrchr(lib_dir_temp, '/');
     if (last_slash_lib) *last_slash_lib = '\0';
-    strncpy(g_lib_dir, lib_dir_temp, sizeof(g_lib_dir));
+    snprintf(g_lib_dir, sizeof(g_lib_dir), "%s", lib_dir_temp);
     
     LOG("g_lib_dir=%s", g_lib_dir);  // ← AGREGAR
     
     // 2. Obtener Files Dir
-    strncpy(g_files_dir, image, sizeof(g_files_dir));
+    snprintf(g_files_dir, sizeof(g_files_dir), "%s", image);
     char *image_name = strrchr(g_files_dir, '/');
     if (image_name) *image_name = '\0';
     
     LOG("g_files_dir=%s", g_files_dir);  // ← AGREGAR
     
     // 3. Guardar image path
-    strncpy(g_image_path, image, sizeof(g_image_path));
+    snprintf(g_image_path, sizeof(g_image_path), "%s", image);
     
     LOG("g_image_path=%s", g_image_path);  // ← AGREGAR
     LOG("Iniciando carga de dependencias");  // ← AGREGAR
@@ -208,13 +225,13 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     
     #define LOAD_DEP(name) \
         snprintf(path, sizeof(path), "%s/" #name, g_lib_dir); \
-        strcat(last_error, "Cargando " #name "...\n"); \
+        err_append("Cargando " #name "...\n"); \
         h = dlopen(path, RTLD_NOW | RTLD_GLOBAL); \
         if (!h) { \
             snprintf(temp, sizeof(temp), "ERROR: %s\n", dlerror()); \
-            strcat(last_error, temp); \
+            err_append(temp); \
         } else { \
-            strcat(last_error, "OK\n"); \
+            err_append("OK\n"); \
         }
             
     LOAD_DEP(libz.so)
@@ -223,12 +240,12 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     LOAD_DEP(libiconv.so)
     LOAD_DEP(libandroid-execinfo.so)
     
-    strcat(last_error, "Cargando libsqueak.so...\n");
+    err_append("Cargando libsqueak.so...\n");
     void *vm_handle = dlopen(lib, RTLD_NOW | RTLD_GLOBAL);
     if (!vm_handle) {
         // Manejo de error de dlopen
     }
-    strcat(last_error, "OK\n");
+    err_append("OK\n");
 
     // ----------------------------------------------------
     // INICIO: CARGA EXPLÍCITA DE DEPENDENCIAS (El Fix)
@@ -289,7 +306,7 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
         NULL // Marcador de fin de array
     };
 
-    strcat(last_error, "Iniciando precarga de dependencias...\n");
+    err_append("Iniciando precarga de dependencias...\n");
     
     LOG("Array de dependencias creado");  // ← AGREGAR
 
@@ -304,9 +321,9 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
         
         LOG("Ruta completa: %s", dep_full_path);  // ← AGREGAR
         
-        strcat(last_error, "Cargando: ");
-        strcat(last_error, dep_name);
-        strcat(last_error, "...");
+        err_append("Cargando: ");
+        err_append(dep_name);
+        err_append("...");
 
         // Usar dlopen con RTLD_GLOBAL para cargar en el espacio de nombres principal
         void *dep_handle = dlopen(dep_full_path, RTLD_NOW | RTLD_GLOBAL);
@@ -314,29 +331,29 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
         if (!dep_handle) {
             // Si falla, lo registramos. Squeak fallará después, pero el log lo explica.
             snprintf(temp, sizeof(temp), "FALLO: %s\n", dlerror());
-            strcat(last_error, temp);
+            err_append(temp);
             LOG("FALLO cargando %s: %s", dep_name, dlerror());  // ← AGREGAR
         } else {
-            strcat(last_error, "OK\n");
+            err_append("OK\n");
             LOG("OK: %s", dep_name);  // ← AGREGAR
         }
     }
 
-    strcat(last_error, "Precarga terminada.\n");
+    err_append("Precarga terminada.\n");
     LOG("Loop de precarga terminado");  // ← AGREGAR
     // ----------------------------------------------------
     // FIN: CARGA EXPLÍCITA DE DEPENDENCIAS
     // ----------------------------------------------------
     
-    strcat(last_error, "Buscando main()...\n");
+    err_append("Buscando main()...\n");
     g_squeak_main = (squeak_main_t)dlsym(vm_handle, "main");
     if (!g_squeak_main) {
         // Manejo de error de dlsym
     }
-    strcat(last_error, "main() encontrado!\n");
+    err_append("main() encontrado!\n");
 
     LOG("Preparando para lanzar thread de VM");  // ← AGREGAR
-    strcat(last_error, "Lanzando thread...\n");
+    err_append("Lanzando thread...\n");
 
     // Crear thread nativo para la VM
     pthread_t thread;
@@ -356,7 +373,7 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     pthread_detach(thread);
     LOG("Thread detached");  // ← AGREGAR
 
-    strcat(last_error, "Thread lanzado! VM ejecutándose en background.\n");
+    err_append("Thread lanzado! VM ejecutándose en background.\n");
 
     LOG("Liberando strings JNI");  // ← AGREGAR
     
