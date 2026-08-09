@@ -14,9 +14,15 @@ import android.content.Context;
 import android.content.DialogInterface;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.ContentValues;
 import android.net.Uri;
 import android.provider.DocumentsContract;
+import android.provider.MediaStore;
+import android.provider.OpenableColumns;
+import android.database.Cursor;
 import android.os.Build;
+import android.os.FileObserver;
+import android.os.Environment;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
@@ -142,6 +148,15 @@ public class XServerActivity extends Activity {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.main);
 
+        // Android 6.0–9 need a runtime grant of WRITE_EXTERNAL_STORAGE for the
+        // fileout export to Downloads (10+ uses MediaStore, no permission). Ask
+        // once; if declined, exports are skipped quietly and everything else works.
+        if (Build.VERSION.SDK_INT >= 23 && Build.VERSION.SDK_INT < 29
+                && checkSelfPermission(android.Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                   != android.content.pm.PackageManager.PERMISSION_GRANTED)
+            requestPermissions(new String[]{
+                    android.Manifest.permission.WRITE_EXTERNAL_STORAGE }, 42);
+
            extractAssets();
         Log.i(TAG, "Extract Assets OK");
         extractPlugins();
@@ -188,8 +203,16 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 return;
             }
 
-            File image = new File(filesDir, "Cuis.image");
+            File image = new File(filesDir, currentImageName());
             File bootPending = new File(filesDir, ".boot_pending");
+
+            if (!image.isFile()) {
+                Log.w(TAG, "chosen image " + image.getName() + " is gone — back to the chooser");
+                marker.delete();
+                bootPending.delete();  // a stale one must not condemn the NEXT choice
+                showLoadImageDialog("That image is no longer on the device. Pick another.");
+                return;
+            }
 
             // Don't brick the app on an image that can't boot (a 32-bit image, say,
             // makes the 64-bit VM abort the whole process → the app "dies" and, since
@@ -237,11 +260,16 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     showLoadImageDialog("The VM could not start with that image. Pick another.");
                     return;
                 }
+                _vmRunning = true;
 
                 // Still alive a few seconds later ⇒ the image booted fine.
                 _screenView.postDelayed(() -> {
                     if (bootPending.delete()) Log.i(TAG, "boot healthy; cleared .boot_pending");
                 }, 7000);
+
+                // Copy fileouts (.st/.cs) the image writes into the user-visible
+                // Downloads/OpenSmalltalk/ folder as they appear.
+                startFileoutWatcher();
 
             } catch (Throwable t) {
                 Log.e(TAG, "Error lanzando VM", t);
@@ -372,6 +400,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      */
     @Override
     public void onDestroy() {
+        stopFileoutWatcher();
         _xServer.stop();
         super.onDestroy();
 
@@ -639,25 +668,38 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         if (requestCode == ACTIVITY_LOAD_IMAGE) {
             if (resultCode == RESULT_OK && data != null && data.getData() != null) {
                 Uri imgUri = data.getData();
-                File image = new File(getFilesDir(), "Cuis.image");
-                if (copyUriToFile(imgUri, image)) {
+                // Keep the picked file's real name so it stays its own entry in the
+                // Load-image library instead of overwriting the previous image.
+                String name = displayNameForUri(imgUri);
+                if (name != null) name = name.trim();
+                if (name == null || !name.endsWith(".image") || name.length() <= ".image".length())
+                    name = "Imported.image";
+                File image = new File(getFilesDir(), name);
+                // Copy to a temp file and validate BEFORE moving into place, so a
+                // rejected pick can't destroy a same-named image already in the library.
+                File part = new File(image.getPath() + ".part");
+                if (copyUriToFile(imgUri, part)) {
                     // Reject a 32-bit image up front (the 64-bit VM would abort on it)
                     // so we never set the marker / restart into a boot that bricks.
-                    if (is32BitSpurImage(image)) {
-                        image.delete();
+                    if (is32BitSpurImage(part)) {
+                        part.delete();
                         showLoadImageDialog("That image is 32-bit — the VM needs a 64-bit "
                                 + "Spur image. Pick another.");
                         return;
                     }
+                    if (!part.renameTo(image)) {
+                        part.delete();
+                        Toast.makeText(this, "Could not store the selected image.", Toast.LENGTH_LONG).show();
+                        return;
+                    }
                     // Assume the .changes lives next to the .image (same folder) and
                     // grab it automatically — no second picker.
-                    copySiblingChanges(imgUri);
-                    // Mark so extractAssets() never overwrites this custom image / changes.
-                    try { new File(getFilesDir(), ".custom_image").createNewFile(); }
-                    catch (IOException e) { Log.e(TAG, "could not write .custom_image marker", e); }
+                    copySiblingChanges(imgUri, imageBase(name) + ".changes");
+                    setCurrentImageName(name);
                     Toast.makeText(this, "Image loaded — restarting.", Toast.LENGTH_SHORT).show();
                     restartApp();
                 } else {
+                    part.delete();
                     Toast.makeText(this, "Could not read the selected image.", Toast.LENGTH_LONG).show();
                 }
             }
@@ -665,15 +707,30 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         }
     }
 
+    /** The user-visible file name of a SAF document, or null. */
+    private String displayNameForUri(Uri uri) {
+        try (Cursor c = getContentResolver().query(uri,
+                new String[]{ OpenableColumns.DISPLAY_NAME }, null, null, null)) {
+            if (c != null && c.moveToFirst()) {
+                String n = c.getString(0);
+                // keep it a safe flat filename
+                if (n != null) return new File(n).getName();
+            }
+        } catch (Exception e) {
+            Log.i(TAG, "no display name for " + uri + ": " + e.getMessage());
+        }
+        return null;
+    }
+
     /**
      * Copy the .changes file that sits beside the picked .image (same directory) into
-     * filesDir as Cuis.changes. Derives the sibling document URI by swapping the
-     * extension in the document id (works for on-device providers: Downloads, storage).
-     * If there's no sibling, boot without a changes file (stable) rather than keeping
-     * a mismatched one.
+     * filesDir under the given name (the image's base + ".changes", so the VM finds
+     * it). Derives the sibling document URI by swapping the extension in the document
+     * id (works for on-device providers: Downloads, storage). If there's no sibling,
+     * boot without a changes file (stable) rather than keeping a mismatched one.
      */
-    private void copySiblingChanges(Uri imgUri) {
-        File changes = new File(getFilesDir(), "Cuis.changes");
+    private void copySiblingChanges(Uri imgUri, String changesName) {
+        File changes = new File(getFilesDir(), changesName);
         try {
             String docId = DocumentsContract.getDocumentId(imgUri);
             if (docId != null && docId.toLowerCase().endsWith(".image")) {
@@ -861,25 +918,123 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
     }
 
-    /** "Load image…" → choose: download the latest Squeak or Cuis, or browse the device. */
+    /** "Load image…" → open a local image, download Squeak/Cuis/Cuis University, or browse. */
     private void showLoadImageDialog() { showLoadImageDialog(null); }
 
-    /** As above, optionally preceded by a short explanatory toast (e.g. after a bad image). */
+    /**
+     * The image library. Every image ever downloaded / picked / saved-as stays in
+     * filesDir under its own name, so it is listed here and reopens offline with one
+     * tap. The download entries always follow, then the device picker, then (when
+     * there is something to delete) a delete submenu to reclaim space.
+     */
     private void showLoadImageDialog(String message) {
         if (message != null)
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        final String[] options = { "Squeak (download)", "Cuis 7.5 (download)",
-                "Cuis University (download)", "From device…" };
+        final File[] local = localImages();
+        final java.util.ArrayList<String> items = new java.util.ArrayList<>();
+        for (File f : local)
+            items.add(imageBase(f.getName()) + "  (on device)");
+        items.add("Squeak (download)");
+        items.add("Cuis 7.5 (download)");
+        items.add("Cuis University (download)");
+        items.add("From device…");
+        if (local.length > 0) items.add("Delete an image…");
         new AlertDialog.Builder(this)
                 .setTitle("Load image")
-                .setItems(options, (dialog, which) -> {
-                    if (which == 0) downloadAndLoad("Squeak");
-                    else if (which == 1) downloadAndLoad("Cuis");
-                    else if (which == 2) downloadAndLoad("Cuis University");
-                    else launchImagePicker();
+                .setItems(items.toArray(new String[0]), (dialog, which) -> {
+                    if (which < local.length) { openLocalImage(local[which]); return; }
+                    int k = which - local.length;
+                    if (k == 0) downloadAndLoad("Squeak");
+                    else if (k == 1) downloadAndLoad("Cuis");
+                    else if (k == 2) downloadAndLoad("Cuis University");
+                    else if (k == 3) launchImagePicker();
+                    else showDeleteImageDialog();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
+    }
+
+    /** Local .image files in filesDir, most recently used (mtime) first. */
+    private File[] localImages() {
+        File[] all = getFilesDir().listFiles(
+                f -> f.isFile() && f.getName().endsWith(".image"));
+        if (all == null) return new File[0];
+        java.util.Arrays.sort(all, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+        return all;
+    }
+
+    private String imageBase(String fileName) {
+        return fileName.endsWith(".image")
+                ? fileName.substring(0, fileName.length() - ".image".length()) : fileName;
+    }
+
+    /** Boot an image that is already in filesDir — no download, works offline. */
+    private void openLocalImage(File image) {
+        if (is32BitSpurImage(image)) {
+            showLoadImageDialog("That image is 32-bit — the VM needs a 64-bit Spur image.");
+            return;
+        }
+        setCurrentImageName(image.getName());
+        Toast.makeText(this, "Opening " + imageBase(image.getName()) + "…", Toast.LENGTH_SHORT).show();
+        restartApp();
+    }
+
+    private void showDeleteImageDialog() {
+        final File[] local = localImages();
+        if (local.length == 0) { showLoadImageDialog(); return; }
+        final String[] names = new String[local.length];
+        for (int i = 0; i < local.length; i++)
+            names[i] = imageBase(local[i].getName())
+                     + "  (" + (local[i].length() >> 20) + " MB)";
+        new AlertDialog.Builder(this)
+                .setTitle("Delete which image?")
+                .setItems(names, (dialog, which) -> {
+                    File img = local[which];
+                    boolean wasCurrent = img.getName().equals(currentImageName());
+                    if (wasCurrent && _vmRunning) {
+                        // The VM holds this file open: deleting it would silently
+                        // unlink the session's history, and an in-image Save would
+                        // resurrect the file behind the library's back.
+                        Toast.makeText(this, "That image is open right now — "
+                                + "switch to another image first.", Toast.LENGTH_LONG).show();
+                        showLoadImageDialog();
+                        return;
+                    }
+                    File chg = new File(getFilesDir(), imageBase(img.getName()) + ".changes");
+                    img.delete(); chg.delete();
+                    if (wasCurrent) new File(getFilesDir(), ".custom_image").delete();
+                    Toast.makeText(this, "Deleted.", Toast.LENGTH_SHORT).show();
+                    showLoadImageDialog();
+                })
+                .setNegativeButton("Cancel", (d, w) -> showLoadImageDialog())
+                .show();
+    }
+
+    /**
+     * Which image in filesDir boots. Stored as the contents of the .custom_image
+     * marker; an EMPTY marker (legacy installs, push-image.sh) means "Cuis.image".
+     */
+    private String currentImageName() {
+        File marker = new File(getFilesDir(), ".custom_image");
+        try (InputStream in = new java.io.FileInputStream(marker)) {
+            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+            byte[] buf = new byte[256]; int n;
+            while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+            String name = bo.toString("UTF-8").trim();
+            if (!name.isEmpty() && !name.contains("/") && name.endsWith(".image"))
+                return name;
+        } catch (Exception ignore) { }
+        return "Cuis.image";
+    }
+
+    private void setCurrentImageName(String name) {
+        try (FileOutputStream out = new FileOutputStream(
+                new File(getFilesDir(), ".custom_image"))) {
+            // trim: currentImageName() trims on read, so keep the two symmetric
+            out.write(name.trim().getBytes("UTF-8"));
+        } catch (IOException e) {
+            Log.e(TAG, "could not write .custom_image marker", e);
+        }
     }
 
     /**
@@ -912,11 +1067,13 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         pd.show();
         new Thread(() -> {
             try {
-                if (flavor.equals("Squeak")) downloadSqueak(pd);
-                else if (flavor.equals("Cuis University")) downloadCuisUniversity(pd);
-                else downloadCuis(pd);
-                // keep the download from being clobbered by the bundled default next boot
-                new File(getFilesDir(), ".custom_image").createNewFile();
+                String imageName;
+                if (flavor.equals("Squeak")) imageName = downloadSqueak(pd);
+                else if (flavor.equals("Cuis University")) imageName = downloadCuisUniversity(pd);
+                else imageName = downloadCuis(pd);
+                // Remember which image boots; the file keeps its real name, so it also
+                // stays in the Load-image list for offline reopening later.
+                setCurrentImageName(imageName);
                 runOnUiThread(() -> {
                     pd.dismiss();
                     Toast.makeText(this, flavor + " loaded — restarting.", Toast.LENGTH_SHORT).show();
@@ -933,7 +1090,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         }).start();
     }
 
-    private void downloadSqueak(ProgressDialog pd) throws Exception {
+    private String downloadSqueak(ProgressDialog pd) throws Exception {
         setProgressMsg(pd, "Finding latest build…");
         String listing = httpGetString("https://files.squeak.org/6.0/");
         Matcher m = Pattern.compile("Squeak6\\.0-(\\d+)-64bit").matcher(listing);
@@ -945,11 +1102,12 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         File zip = new File(getCacheDir(), "download.zip");
         downloadToFile(url, zip, pd, "Downloading " + baseName);
         setProgressMsg(pd, "Unzipping…");
-        unzipBundle(zip);
+        String imageName = unzipBundle(zip);
         zip.delete();
+        return imageName;
     }
 
-    private void downloadCuis(ProgressDialog pd) throws Exception {
+    private String downloadCuis(ProgressDialog pd) throws Exception {
         setProgressMsg(pd, "Finding image…");
         // Pin to the stable base tag (currently Cuis 7.5-7775) rather than master
         // HEAD: the bleeding-edge dev image (Cuis 7.9-8090) boots but renders a blank
@@ -977,13 +1135,15 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             if (name.endsWith(".sources")) { srcName = name; srcUrl = e.getValue(); }
         }
         if (imgUrl == null) throw new Exception("no Cuis .image found");
-        String chgUrl = byName.get(imgName.replace(".image", ".changes"));
-        downloadToFile(imgUrl, new File(getFilesDir(), "Cuis.image"), pd, "Downloading " + imgName);
-        if (chgUrl != null) downloadToFile(chgUrl, new File(getFilesDir(), "Cuis.changes"), pd, "Downloading changes");
+        String chgName = imgName.replace(".image", ".changes");
+        String chgUrl = byName.get(chgName);
+        downloadToFile(imgUrl, new File(getFilesDir(), imgName), pd, "Downloading " + imgName);
+        if (chgUrl != null) downloadToFile(chgUrl, new File(getFilesDir(), chgName), pd, "Downloading changes");
         if (srcUrl != null) downloadToFile(srcUrl, new File(getFilesDir(), srcName), pd, "Downloading sources");
+        return imgName;
     }
 
-    private void downloadCuisUniversity(ProgressDialog pd) throws Exception {
+    private String downloadCuisUniversity(ProgressDialog pd) throws Exception {
         setProgressMsg(pd, "Finding latest release…");
         // Cuis University (sites.google.com/view/cuis-university) publishes per-platform
         // bundles as GitHub releases on Cuis-University/Cuis-University. Every platform's
@@ -999,8 +1159,9 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         File zip = new File(getCacheDir(), "download.zip");
         downloadToFile(url, zip, pd, "Downloading Cuis University (~150 MB)");
         setProgressMsg(pd, "Unzipping…");
-        unzipBundle(zip);
+        String imageName = unzipBundle(zip);
         zip.delete();
+        return imageName;
     }
 
     private void setProgressMsg(final ProgressDialog pd, final String msg) {
@@ -1021,15 +1182,20 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         } finally { c.disconnect(); }
     }
 
-    /** Stream a URL to a file, updating the ProgressDialog. */
+    /**
+     * Stream a URL to a file, updating the ProgressDialog. Writes to "<dst>.part"
+     * and renames on success, so an interrupted download can neither truncate an
+     * existing library image nor leave a half-image that LOOKS loadable.
+     */
     private void downloadToFile(String urlStr, File dst, final ProgressDialog pd, final String label) throws Exception {
+        File part = new File(dst.getPath() + ".part");
         HttpURLConnection c = (HttpURLConnection) new URL(urlStr).openConnection();
         c.setInstanceFollowRedirects(true);
         c.setConnectTimeout(20000); c.setReadTimeout(30000);
         c.setRequestProperty("User-Agent", "opensmalltalk-android");
         final int total = c.getContentLength();
         runOnUiThread(() -> { pd.setMessage(label); pd.setIndeterminate(total <= 0); pd.setProgress(0); });
-        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(dst)) {
+        try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
             byte[] buf = new byte[65536]; int n; long got = 0, lastPct = -1;
             while ((n = in.read(buf)) != -1) {
                 out.write(buf, 0, n); got += n;
@@ -1038,13 +1204,21 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     if (pct != lastPct) { lastPct = pct; final int p = (int) pct; runOnUiThread(() -> pd.setProgress(p)); }
                 }
             }
+        } catch (Exception e) {
+            part.delete();
+            throw e;
         } finally { c.disconnect(); }
+        if (!part.renameTo(dst)) { part.delete(); throw new IOException("could not move " + part + " into place"); }
         Log.i(TAG, "downloaded " + urlStr + " -> " + dst.getName() + " (" + dst.length() + " bytes)");
     }
 
-    /** Unzip a Squeak bundle: *.image -> Cuis.image, *.changes -> Cuis.changes, *.sources kept by name. */
-    private void unzipBundle(File zip) throws Exception {
-        boolean gotImage = false;
+    /**
+     * Unzip a Squeak/Cuis bundle keeping the files' real names (image + changes +
+     * sources; anything else — platform VMs etc. — is skipped). Returns the image
+     * file name, which the caller records as the current image.
+     */
+    private String unzipBundle(File zip) throws Exception {
+        String imageName = null;
         try (ZipInputStream zis = new ZipInputStream(
                 new java.io.BufferedInputStream(new java.io.FileInputStream(zip)))) {
             ZipEntry ze;
@@ -1055,19 +1229,24 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 // .image too and would clobber the real one with AppleDouble junk.
                 if (base.startsWith("._") || ze.getName().contains("__MACOSX")) continue;
                 String low = base.toLowerCase();
-                File dst;
-                if (low.endsWith(".image")) { dst = new File(getFilesDir(), "Cuis.image"); gotImage = true; }
-                else if (low.endsWith(".changes")) dst = new File(getFilesDir(), "Cuis.changes");
-                else if (low.endsWith(".sources")) dst = new File(getFilesDir(), base);
-                else continue;
-                try (FileOutputStream out = new FileOutputStream(dst)) {
+                if (!(low.endsWith(".image") || low.endsWith(".changes") || low.endsWith(".sources")))
+                    continue;
+                File dst = new File(getFilesDir(), base);
+                File part = new File(dst.getPath() + ".part");
+                if (low.endsWith(".image")) imageName = base;
+                try (FileOutputStream out = new FileOutputStream(part)) {
                     byte[] buf = new byte[65536]; int n;
                     while ((n = zis.read(buf)) != -1) out.write(buf, 0, n);
+                } catch (Exception e) {
+                    part.delete();
+                    throw e;
                 }
+                if (!part.renameTo(dst)) { part.delete(); throw new IOException("could not move " + base + " into place"); }
                 Log.i(TAG, "unzipped " + base + " -> " + dst.getName());
             }
         }
-        if (!gotImage) throw new Exception("no .image found in the downloaded zip");
+        if (imageName == null) throw new Exception("no .image found in the downloaded zip");
+        return imageName;
     }
 
     /** Let the user pick a Smalltalk .image from device storage (SAF — no permission needed). */
@@ -1119,6 +1298,10 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * Android blocks) we launch it, and it kills us and relaunches us cleanly.
      */
     private void restartApp() {
+        // A deliberate restart is not a crashed boot: clear .boot_pending so the
+        // next launch isn't mistaken for a crash-loop (it stays set if the user
+        // switches images within ~7 s of a boot, before the healthy-boot timer).
+        new File(getFilesDir(), ".boot_pending").delete();
         // Close the X server socket (127.0.0.1:6000) cleanly first — otherwise the
         // dying process still holds the port and the freshly restarted VM's X
         // server can't serve, and the new process dies a few seconds in.
@@ -1321,8 +1504,142 @@ private void extractAssets() {
         Log.i("CuisApp", "APP-LOG: " + msg); // ✅ FORZAR LOG
     }
 
+    // ------------------------------------------------------------------
+    // Fileout export: Smalltalk fileouts (.st / .pck.st / .cs) are written into the
+    // app-private filesDir, where the user can't see them. Watch for them and copy
+    // each one into the shared Downloads/OpenSmalltalk/ folder as it appears.
+    // ------------------------------------------------------------------
+
+    /** True once startVMNative() succeeded — the booted image file is then in use. */
+    private volatile boolean _vmRunning = false;
+
+    // CopyOnWrite: appended from the UI thread at startup AND from FileObserver's
+    // dispatch thread when the image creates a new subdirectory at runtime.
+    private final java.util.List<FileObserver> _fileoutObservers =
+            new java.util.concurrent.CopyOnWriteArrayList<>();
+    private final Set<String> _watchedDirs =
+            java.util.Collections.synchronizedSet(new HashSet<>());
+
+    private void startFileoutWatcher() {
+        if (!_fileoutObservers.isEmpty()) return;   // already watching
+        watchDirForFileouts(getFilesDir(), false);
+        // Fileouts may land in a subdirectory of the user dir (image-dependent), and
+        // FileObserver is not recursive — watch existing subdirs too (skip plugins).
+        File[] subs = getFilesDir().listFiles(File::isDirectory);
+        if (subs != null)
+            for (File d : subs)
+                if (!d.getName().equals("plugins")) watchDirForFileouts(d, false);
+    }
+
+    private void stopFileoutWatcher() {
+        for (FileObserver o : _fileoutObservers) o.stopWatching();
+        _fileoutObservers.clear();
+        _watchedDirs.clear();
+    }
+
     /**
-     * Truncate Cuis.changes to just after the last ----SNAPSHOT----/----QUIT----/
+     * Watch one directory. exportExisting is set for directories discovered while
+     * the app runs (the image just created them): a fileout written in the gap
+     * between mkdir and our inotify watch would otherwise be missed, so sweep the
+     * directory once after the watch starts. It is NOT set for the startup set —
+     * re-exporting every old fileout on every boot would just spam toasts.
+     */
+    private void watchDirForFileouts(final File dir, boolean exportExisting) {
+        if (!_watchedDirs.add(dir.getAbsolutePath())) return;   // already watched
+        FileObserver o = new FileObserver(dir.getAbsolutePath(),
+                FileObserver.CLOSE_WRITE | FileObserver.MOVED_TO | FileObserver.CREATE) {
+            @Override public void onEvent(int event, String path) {
+                if (path == null) return;
+                File f = new File(dir, path);
+                // A new subdirectory (e.g. the image creating a FileOuts/ folder):
+                // start watching it as well, so fileouts inside it are caught.
+                if ((event & FileObserver.CREATE) != 0 && f.isDirectory()
+                        && !path.equals("plugins") && dir.equals(getFilesDir())) {
+                    watchDirForFileouts(f, true);
+                    return;
+                }
+                if ((event & (FileObserver.CLOSE_WRITE | FileObserver.MOVED_TO)) == 0) return;
+                maybeExportFileout(f, path);
+            }
+        };
+        o.startWatching();
+        _fileoutObservers.add(o);
+        Log.i(TAG, "watching for fileouts in " + dir);
+        if (exportExisting) {
+            File[] present = dir.listFiles(File::isFile);
+            if (present != null)
+                for (File f : present) maybeExportFileout(f, f.getName());
+        }
+    }
+
+    private void maybeExportFileout(File f, String name) {
+        String low = name.toLowerCase();
+        boolean isFileout = low.endsWith(".st") || low.endsWith(".cs");
+        if (!isFileout || name.equals("dev-tests.st")) return;
+        if (!f.isFile() || f.length() == 0) return;
+        exportToDownloads(f);
+    }
+
+    /**
+     * Copy a fileout into the shared Downloads/OpenSmalltalk/ folder. On Android 10+
+     * this uses MediaStore (no permission needed); re-exporting the same name
+     * overwrites the previous copy instead of piling up "name (1).st" duplicates.
+     * On older devices it writes to the public Downloads directory directly and
+     * quietly gives up if storage permission is missing.
+     */
+    private void exportToDownloads(File src) {
+        try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                Uri collection = MediaStore.Downloads.EXTERNAL_CONTENT_URI;
+                String relPath = Environment.DIRECTORY_DOWNLOADS + "/OpenSmalltalk/";
+                Uri existing = null;
+                try (Cursor c = getContentResolver().query(collection,
+                        new String[]{ MediaStore.MediaColumns._ID },
+                        MediaStore.MediaColumns.DISPLAY_NAME + "=? AND "
+                                + MediaStore.MediaColumns.RELATIVE_PATH + "=?",
+                        new String[]{ src.getName(), relPath }, null)) {
+                    if (c != null && c.moveToFirst())
+                        existing = Uri.withAppendedPath(collection, c.getString(0));
+                }
+                Uri dst = existing;
+                if (dst == null) {
+                    ContentValues cv = new ContentValues();
+                    cv.put(MediaStore.MediaColumns.DISPLAY_NAME, src.getName());
+                    cv.put(MediaStore.MediaColumns.RELATIVE_PATH, relPath);
+                    // No MIME_TYPE: declaring text/plain makes MediaStore append
+                    // ".txt" to the unknown ".st" extension, renaming the fileout.
+                    dst = getContentResolver().insert(collection, cv);
+                }
+                if (dst == null) throw new IOException("MediaStore insert failed");
+                try (InputStream in = new java.io.FileInputStream(src);
+                     OutputStream out = getContentResolver().openOutputStream(dst, "wt")) {
+                    byte[] buf = new byte[65536]; int n;
+                    while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                }
+            } else {
+                File dir = new File(Environment.getExternalStoragePublicDirectory(
+                        Environment.DIRECTORY_DOWNLOADS), "OpenSmalltalk");
+                dir.mkdirs();
+                File dst = new File(dir, src.getName());
+                try (InputStream in = new java.io.FileInputStream(src);
+                     OutputStream out = new FileOutputStream(dst)) {
+                    byte[] buf = new byte[65536]; int n;
+                    while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
+                }
+            }
+            Log.i(TAG, "fileout exported: " + src.getName());
+            runOnUiThread(() -> Toast.makeText(this,
+                    "Saved to Downloads/OpenSmalltalk/" + src.getName(),
+                    Toast.LENGTH_SHORT).show());
+        } catch (Exception e) {
+            // e.g. pre-Android-10 device without storage permission — don't nag on
+            // every fileout, the copy in filesDir is still intact.
+            Log.e(TAG, "could not export fileout " + src.getName(), e);
+        }
+    }
+
+    /**
+     * Truncate the current image's .changes to just after the last ----SNAPSHOT----/----QUIT----/
      * ----QUIT/NOSAVE---- record, dropping any trailing content. On Android the app
      * is killed (not cleanly quit), so Cuis leaves a dangling ----STARTUP---- at the
      * end of the changes file; on the next boot that reads as "lost changes" and pops
@@ -1331,7 +1648,8 @@ private void extractAssets() {
      * snapshot/quit. No-op when there's no changes file. Runs before every VM launch.
      */
     private void pruneChangesFile() {
-        File changes = new File(getFilesDir(), "Cuis.changes");
+        File changes = new File(getFilesDir(),
+                imageBase(currentImageName()) + ".changes");
         if (!changes.exists() || changes.length() < 64) return;
         RandomAccessFile raf = null;
         try {

@@ -130,10 +130,18 @@ Zoom renders the X screen at `physical / zoom` and scales it up with nearest-nei
   extracts image + changes + sources from its platform zip.
 - **From device…** uses the Storage Access Framework (no storage permission). The sibling
   `<name>.changes` next to the picked `.image` is copied automatically.
+- **Every image you load stays in the library.** Downloads and device picks keep their real
+  file names, so the *Load image* dialog lists them all — most recently used first — and any
+  of them reopens **offline** with one tap. *Delete an image…* (in the same dialog) reclaims
+  the space. An image saved inside Smalltalk under a new name (*Save Image as…* `Foo.image`)
+  shows up in the library too.
+- **Fileouts land in `Downloads/OpenSmalltalk/`.** Anything the image files out (`.st`,
+  `.pck.st`, `.cs`) is copied there the moment it is written (Android 10+: via MediaStore, no
+  permission needed; re-fileouts overwrite the copy), so your code leaves the app's private
+  storage automatically.
 - Images live in the app's **private** storage (`filesDir`). **Save Image works** (verified on
-  Cuis 7.5: the file is rewritten and the saved state boots again). There is **no export yet**
-  — see [Known limitations](#known-limitations).
-- The app boots `Cuis.image` in `filesDir`, whatever image you actually loaded.
+  Cuis 7.5: the file is rewritten and the saved state boots again). Exporting the `.image`
+  itself is still pending — see [Known limitations](#known-limitations).
 
 ### Bad images can't brick the app
 
@@ -287,9 +295,10 @@ See: https://github.com/agustincico/android-xserver-enhanced
 ## Known limitations
 
 - **ARM64 only**; images must be 64-bit Spur.
-- **No image export.** The image lives in private app storage, so you can't copy your saved
-  work off the device yet; and only `Cuis.image` is booted (*Save Image as…* under another
-  name won't be picked up).
+- **No `.image` export.** The image itself lives in private app storage, so a saved image
+  can't be copied off the device yet. (Fileouts DO leave the device — they are auto-copied to
+  `Downloads/OpenSmalltalk/` — and *Save Image as…* under a new name now appears in the
+  in-app library.)
 - **UI preferences reset on restart** (zoom, trackpad, precise pointer, …).
 - **Cuis master / 7.9 renders a blank world**; the in-app download is pinned to 7.5.
 - **Fine targets** (window resize edges, pane dividers) remain fiddly with a finger.

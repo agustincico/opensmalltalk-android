@@ -213,10 +213,16 @@ From the README "Known limitations" plus what the loop surfaced:
    *Save Image as…* pops a "New file name?" dialog defaulting to `Cuis.image`
    (also filesDir). So the old "file-write errors depending on storage
    permissions" does NOT reproduce here — the image lives in the app's private,
-   writable filesDir. **Remaining gap:** that dir is private, so the user can't
-   back up / transfer the `.image` off the phone, and *Save Image as…* under a
-   different name won't be re-booted (the app only boots `Cuis.image`). A future
-   **"Export image"** (share-sheet / copy to Downloads via SAF) would cover that.
+   writable filesDir. **2026-08-09 update — image library + fileout export:** the
+   app now boots whatever image `.custom_image` NAMES (empty marker = legacy
+   `Cuis.image`); every downloaded/picked image keeps its real filename, the Load
+   dialog lists them all for one-tap OFFLINE reopening (+ *Delete an image…*), and
+   *Save Image as…* under `<name>.image` shows up in that list. Fileouts
+   (`.st`/`.pck.st`/`.cs` written anywhere under filesDir, one subdir level) are
+   auto-copied to `Downloads/OpenSmalltalk/` via a FileObserver + MediaStore (no
+   MIME type on insert — text/plain makes MediaStore rename `.st` → `.st.txt`).
+   **Remaining gap:** the `.image` itself still can't leave the phone (a future
+   "Export image" share-sheet / SAF copy).
 
 ## Open items from the 2026-08-09 repo audit
 
@@ -239,8 +245,9 @@ Still open, roughly by value:
    See `docs/BUILDING-VM.md`.
 2. **Persist UI preferences** (zoom, smooth zoom, trackpad, precise pointer,
    pointer, clipboard, long-press) — they reset on every restart.
-3. **Export image** — `filesDir` is private, so saved work can't leave the device;
-   and only `Cuis.image` is booted, so *Save Image as…* under another name is lost.
+3. **Export image** — the `.image` itself still can't leave the device (fileouts
+   now auto-export to Downloads/OpenSmalltalk, and *Save Image as…* names are
+   booted via the image library, so only the share-sheet/SAF copy remains).
 4. **`.boot_pending` guard is coarse** — *any* exit within 7 s (including a
    deliberate quit) is read as a failed boot and drops the chosen image.
 5. **`abiFilters` ships `armeabi-v7a` + `x86_64`** variants that can never run the
