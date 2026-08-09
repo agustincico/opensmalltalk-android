@@ -91,10 +91,15 @@ If you add or rename a plugin, update the `deps_to_load[]` list in
    only covers `squeak.stack.spur`. **Fix:** rebuild the plugins in the stack tree
    (`plugins.int` / `plugins.ext`) and confirm they load, or document the cog tree's patches.
    This also blocks fixing the known over-linked `XDisplayControlPlugin.so`.
-3. **The ~100 support libraries have no manifest.** Harvested from a Termux install with no
-   package list, versions, or copy script — they can't be rebuilt or security-audited as-is.
-   **Fix:** record `pkg list-installed` from that device and a copy script, or switch to
-   libraries built from source with the NDK.
+3. **The support libraries have no full manifest.** Harvested from a Termux install with no
+   package list or copy script. **Most versions have since been recovered** by reading the
+   binaries' embedded version banners (see the table in
+   [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md#recovered-versions-read-from-the-shipped-binaries)
+   — libpng 1.6.50, cairo 1.18.4, pango 1.57.0, HarfBuzz 12.2.0, PCRE2 10.46, expat 2.7.1,
+   D-Bus 1.16.2, FLAC 1.5.0, Vorbis 1.3.7, Opus 1.5.2, libsndfile 1.2.2; all built with Android
+   NDK clang 19.0.1). Still stripped/unknown: **GLib, FreeType, fontconfig**. **Fix:** record
+   `pkg list-installed` from that device for the stripped few, or switch to libraries built from
+   source with the NDK.
 4. **`apply-fixes-stack.sh` is GNU-`sed`-only** (BSD/macOS `sed -i` differs), and assumes
    Termux paths/toolchain.
 

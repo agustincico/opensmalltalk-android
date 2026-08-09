@@ -4,11 +4,14 @@ The source code in this repository is MIT licensed (see [LICENSE](LICENSE)). **T
 redistributes prebuilt third-party native libraries, which are covered by their own licenses,
 not by MIT.** This file discloses what is bundled so redistributors can comply.
 
-> **Status: incomplete.** The binaries in `app/src/main/jniLibs/arm64-v8a/` and
+> **Status: partial.** The binaries in `app/src/main/jniLibs/arm64-v8a/` and
 > `app/src/main/assets/plugins/` were harvested from a **Termux** installation on an ARM64
-> phone (see [docs/BUILDING-VM.md](docs/BUILDING-VM.md)), and **no package/version manifest was
-> kept**. The list below is derived from the file names; exact upstream versions and license
-> texts still have to be recovered. If you redistribute this APK, verify these yourself.
+> phone (see [docs/BUILDING-VM.md](docs/BUILDING-VM.md)); no `pkg list-installed` manifest was
+> kept. However, the versions of many of the shipped libraries have since been **recovered by
+> reading the version banners embedded in the binaries themselves** (see
+> [Recovered versions](#recovered-versions-read-from-the-shipped-binaries) below) — that is the
+> authoritative record of what is actually distributed. A handful are stripped and still need
+> the device's package list. If you redistribute this APK, verify these yourself.
 
 ## The Smalltalk VM
 
@@ -60,8 +63,35 @@ None. `*.image` / `*.changes` / `*.sources` are gitignored; images are downloade
 at runtime (Squeak from files.squeak.org, Cuis from the Cuis-Smalltalk-Dev repository) and
 remain under their own licenses (both MIT).
 
+## Recovered versions (read from the shipped binaries)
+
+These were extracted directly from the committed `.so` files (`strings <lib> | grep` for the
+project's version banner), so they describe **exactly the binaries in this repo** — not a guess
+from a package list. Reproduce with the recipe in
+[docs/BUILDING-VM.md](docs/BUILDING-VM.md#verifying-what-you-have).
+
+| Library | Version | Banner found in the binary |
+|---|---|---|
+| libpng (`libpng16.so`) | **1.6.50** | `libpng version 1.6.50` |
+| HarfBuzz (`libharfbuzz.so`) | **12.2.0** | `12.2.0` |
+| cairo (`libcairo.so.2`) | **1.18.4** | `1.18.4` |
+| pango (`libpango-1.0.so.0`) | **1.57.0** | `1.57.0` |
+| PCRE2 (`libpcre2-8.so`) | **10.46** | `10.46 2025-08-27` |
+| expat (`libexpat.so.1`) | **2.7.1** | `expat_2.7.1` |
+| D-Bus (`libdbus-1.so`) | **1.16.2** | `1.16.2` |
+| FLAC (`libFLAC.so`) | **1.5.0** (2025-02-11) | `reference libFLAC 1.5.0 20250211` |
+| Vorbis (`libvorbis.so`) | **1.3.7** | `Xiph.Org libVorbis I 20200704` |
+| Opus (`libopus.so`) | **1.5.2** | `libopus 1.5.2` |
+| libsndfile (`libsndfile.so`) | **1.2.2** | `libsndfile-1.2.2` |
+| GLib, FreeType, fontconfig | *stripped* | no version banner embedded — still need the device's `pkg list-installed` |
+
+All native libraries were cross-compiled with the **Android NDK clang 19.0.1** (LLD 19.0.1),
+per the compiler banner in the binaries. The VM itself is `opensmalltalk-vm` release tag
+**`r3732`**, `squeak.stack.spur` flavour; the display/sound plugins are from a `squeak.cog.spur`
+tree — see [docs/BUILDING-VM.md](docs/BUILDING-VM.md#provenance-read-from-strings-in-the-binaries).
+
 ## How to help
 
-If you can identify the exact upstream versions (e.g. from the Termux device that produced
-these binaries via `pkg list-installed`), please open a PR replacing this file's estimates with
-the real versions and license texts.
+If you can identify the remaining stripped versions (GLib, FreeType, fontconfig — e.g. from the
+Termux device that produced these binaries via `pkg list-installed`), please open a PR filling
+in the table above with the real versions and license texts.
