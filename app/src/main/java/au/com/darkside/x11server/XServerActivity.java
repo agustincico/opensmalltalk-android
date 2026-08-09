@@ -91,6 +91,13 @@ public class XServerActivity extends Activity {
             String pluginsPath
     );
 
+    /**
+     * The native side's startup log (which libs loaded, which failed and why).
+     * squeak_jni.c has always exported this, but Java never declared it — so the
+     * diagnostics it collects were unreachable. Used when startVMNative() fails.
+     */
+    public native String getLastError();
+
     private static final String TAG = "Cuis";
 
     private XServer _xServer;
@@ -221,6 +228,15 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 
                 int res = startVMNative(libPath, imagePath, pluginsPath);
                 Log.i(TAG, "startVMNative() retornó: " + res);
+
+                if (res != 0) {
+                    // The native side could not load the VM / find its entry point.
+                    // Without this the screen just stayed black with no explanation.
+                    Log.e(TAG, "VM no pudo iniciar (" + res + "): " + getLastError());
+                    bootPending.delete();
+                    showLoadImageDialog("The VM could not start with that image. Pick another.");
+                    return;
+                }
 
                 // Still alive a few seconds later ⇒ the image booted fine.
                 _screenView.postDelayed(() -> {

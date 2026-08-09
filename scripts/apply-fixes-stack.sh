@@ -7,8 +7,21 @@ set -e
 
 echo "=== Applying Android/Termux fixes for OpenSmalltalk VM Stack ==="
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-cd "$REPO_ROOT"
+# This script patches an **opensmalltalk-vm checkout** — NOT this repo. Pass the
+# checkout as $1, or run it from inside one.
+#
+# (It used to do `dirname $0/../..`, which resolves to the PARENT DIRECTORY OF
+# THIS REPO. Every patch path below is relative, so under `set -e` the very first
+# one aborted the script. Nobody could follow the documented procedure.)
+VM_DIR="${1:-$PWD}"
+if [ ! -d "$VM_DIR/platforms/Cross/vm" ] || [ ! -d "$VM_DIR/build.linux64ARMv8" ]; then
+  echo "ERROR: '$VM_DIR' does not look like an opensmalltalk-vm checkout." >&2
+  echo "Usage: bash apply-fixes-stack.sh /path/to/opensmalltalk-vm" >&2
+  echo "(expected  platforms/Cross/vm/  and  build.linux64ARMv8/  inside it)" >&2
+  exit 1
+fi
+cd "$VM_DIR"
+echo "Patching VM checkout: $VM_DIR"
 
 # Fix 1: sqPluginsSCCSVersion.h
 echo "Fix 1: Creating sqPluginsSCCSVersion.h..."

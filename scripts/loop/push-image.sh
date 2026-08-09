@@ -33,9 +33,9 @@ loop_device_online || { loop_err "no device online — run emulator.sh first"; e
 # --- sanity: 64-bit Spur? -------------------------------------------------
 fmt="$(od -An -tu4 -N4 "$IMG" 2>/dev/null | tr -d ' ')"
 case "$fmt" in
-  68021) loop_log "image format 68021 (Spur 64-bit) ✓" ;;
-  6521)  loop_err "image format 6521 = Spur 32-bit — the bundled VM is 64-bit; this will NOT boot" ;;
-  *)     loop_log "image format $fmt (unrecognized; expected 68021 for Spur 64-bit)" ;;
+  68021|68531|68533) loop_log "image format $fmt (Spur 64-bit) ✓" ;;   # 68021 Cuis/Squeak, 68533 Squeak 6.0
+  6521|6505|6504)    loop_err "image format $fmt = 32-bit/V3 — the bundled VM is 64-bit; this will NOT boot" ;;
+  *)                 loop_log "image format $fmt (unrecognized; expected a 64-bit Spur format)" ;;
 esac
 
 loop_adb_root
@@ -53,6 +53,12 @@ push_one() {  # src destname
 push_one "$IMG" "$DEST_IMG"
 [ -n "$CHANGES" ] && { [ -f "$CHANGES" ] || { loop_err "changes not found: $CHANGES"; exit 1; }; push_one "$CHANGES" "$CHANGES_NAME"; }
 [ -n "$ST" ]      && { [ -f "$ST" ]      || { loop_err ".st not found: $ST"; exit 1; };      push_one "$ST" "$DEST_ST"; }
+
+# Mark the image as user-chosen. Without this the app shows its "Load image"
+# chooser on launch (it only auto-boots when .custom_image exists) and the image
+# we just pushed is ignored. Also drop a stale .boot_pending so the crash-loop
+# guard doesn't bounce this fresh image straight back to the chooser.
+"$ADB" shell "rm -f '$FILES_DIR/.boot_pending'; : > '$FILES_DIR/.custom_image' && chown $uidname:$uidname '$FILES_DIR/.custom_image' && chmod 600 '$FILES_DIR/.custom_image' && restorecon '$FILES_DIR/.custom_image' 2>/dev/null" >/dev/null 2>&1
 
 # verify sizes landed
 loop_log "on-device: $("$ADB" shell run-as "$PKG" ls -l "files/$DEST_IMG" 2>/dev/null | tr -d '\r' || "$ADB" shell ls -l "$FILES_DIR/$DEST_IMG" | tr -d '\r')"

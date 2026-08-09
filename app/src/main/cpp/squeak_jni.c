@@ -243,7 +243,16 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     err_append("Cargando libsqueak.so...\n");
     void *vm_handle = dlopen(lib, RTLD_NOW | RTLD_GLOBAL);
     if (!vm_handle) {
-        // Manejo de error de dlopen
+        // Previously this branch was EMPTY: we carried on with a NULL handle,
+        // dlsym(NULL,...) returned NULL, and calling it crashed with SIGSEGV —
+        // a hard crash instead of a diagnosable "the VM could not be loaded".
+        snprintf(temp, sizeof(temp), "ERROR: no se pudo cargar la VM (%s): %s\n", lib, dlerror());
+        err_append(temp);
+        LOG("%s", temp);
+        (*env)->ReleaseStringUTFChars(env, libPath, lib);
+        (*env)->ReleaseStringUTFChars(env, imagePath, image);
+        (*env)->ReleaseStringUTFChars(env, pluginsPath, plugins_path);
+        return -1;   // Java side reports this instead of rendering nothing
     }
     err_append("OK\n");
 
@@ -348,7 +357,15 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     err_append("Buscando main()...\n");
     g_squeak_main = (squeak_main_t)dlsym(vm_handle, "main");
     if (!g_squeak_main) {
-        // Manejo de error de dlsym
+        // Same as above: this branch used to be empty, so a missing entry point
+        // meant calling a NULL function pointer on the VM thread.
+        snprintf(temp, sizeof(temp), "ERROR: la VM no expone main(): %s\n", dlerror());
+        err_append(temp);
+        LOG("%s", temp);
+        (*env)->ReleaseStringUTFChars(env, libPath, lib);
+        (*env)->ReleaseStringUTFChars(env, imagePath, image);
+        (*env)->ReleaseStringUTFChars(env, pluginsPath, plugins_path);
+        return -2;
     }
     err_append("main() encontrado!\n");
 
