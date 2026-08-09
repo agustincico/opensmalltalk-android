@@ -778,34 +778,6 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
     }
 
-    /** Copy the APK's bundled Cuis image/changes into filesDir and boot it (works offline). */
-    private void loadBundledImage() {
-        final ProgressDialog pd = new ProgressDialog(this);
-        pd.setMessage("Loading bundled Cuis…");
-        pd.setCancelable(false);
-        pd.show();
-        new Thread(() -> {
-            try {
-                copyAsset("Cuis.image", new File(getFilesDir(), "Cuis.image"));
-                try { copyAsset("Cuis.changes", new File(getFilesDir(), "Cuis.changes")); }
-                catch (Exception ignore) { /* image may ship without a .changes */ }
-                new File(getFilesDir(), ".custom_image").createNewFile();
-                runOnUiThread(() -> { pd.dismiss(); restartApp(); });
-            } catch (Exception e) {
-                Log.e(TAG, "loadBundledImage failed", e);
-                runOnUiThread(() -> { pd.dismiss();
-                    Toast.makeText(this, "No bundled image: " + e.getMessage(), Toast.LENGTH_LONG).show(); });
-            }
-        }).start();
-    }
-
-    private void copyAsset(String assetName, File dst) throws IOException {
-        try (InputStream in = getAssets().open(assetName); FileOutputStream out = new FileOutputStream(dst)) {
-            byte[] buf = new byte[65536]; int n;
-            while ((n = in.read(buf)) != -1) out.write(buf, 0, n);
-        }
-    }
-
     /**
      * The ☰ options menu — a curated, opaque dialog (the old Android options panel
      * was translucent and hard to read over the Smalltalk world, and full of X-server
@@ -896,15 +868,15 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     private void showLoadImageDialog(String message) {
         if (message != null)
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        final String[] options = { "Latest Squeak (download)", "Cuis 7.5 (download)",
-                "From device…", "Bundled Cuis (offline)" };
+        final String[] options = { "Squeak (download)", "Cuis 7.5 (download)",
+                "Cuis University (download)", "From device…" };
         new AlertDialog.Builder(this)
                 .setTitle("Load image")
                 .setItems(options, (dialog, which) -> {
                     if (which == 0) downloadAndLoad("Squeak");
                     else if (which == 1) downloadAndLoad("Cuis");
-                    else if (which == 2) launchImagePicker();
-                    else loadBundledImage();
+                    else if (which == 2) downloadAndLoad("Cuis University");
+                    else launchImagePicker();
                 })
                 .setNegativeButton("Cancel", null)
                 .show();
@@ -928,10 +900,10 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         }
     }
 
-    /** Download the latest Squeak/Cuis image into filesDir on a background thread, then restart. */
+    /** Download a Squeak/Cuis/Cuis University image into filesDir on a background thread, then restart. */
     private void downloadAndLoad(final String flavor) {
         final ProgressDialog pd = new ProgressDialog(this);
-        pd.setTitle("Downloading latest " + flavor);
+        pd.setTitle("Downloading " + flavor);
         pd.setMessage("Contacting server…");
         pd.setProgressStyle(ProgressDialog.STYLE_HORIZONTAL);
         pd.setIndeterminate(true);
@@ -940,7 +912,9 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         pd.show();
         new Thread(() -> {
             try {
-                if (flavor.equals("Squeak")) downloadSqueak(pd); else downloadCuis(pd);
+                if (flavor.equals("Squeak")) downloadSqueak(pd);
+                else if (flavor.equals("Cuis University")) downloadCuisUniversity(pd);
+                else downloadCuis(pd);
                 // keep the download from being clobbered by the bundled default next boot
                 new File(getFilesDir(), ".custom_image").createNewFile();
                 runOnUiThread(() -> {
@@ -1009,6 +983,26 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         if (srcUrl != null) downloadToFile(srcUrl, new File(getFilesDir(), srcName), pd, "Downloading sources");
     }
 
+    private void downloadCuisUniversity(ProgressDialog pd) throws Exception {
+        setProgressMsg(pd, "Finding latest release…");
+        // Cuis University (sites.google.com/view/cuis-university) publishes per-platform
+        // bundles as GitHub releases on Cuis-University/Cuis-University. Every platform's
+        // bundle contains the same image/changes/sources plus a platform VM we ignore;
+        // we take the Windows zip (a plain zip — the macOS one carries __MACOSX
+        // resource-fork entries) and unzipBundle() keeps just the three files we need.
+        String json = httpGetString(
+                "https://api.github.com/repos/Cuis-University/Cuis-University/releases/latest");
+        Matcher m = Pattern.compile(
+                "\"browser_download_url\"\\s*:\\s*\"([^\"]+windows64\\.zip)\"").matcher(json);
+        if (!m.find()) throw new Exception("no windows64.zip in the latest Cuis University release");
+        String url = m.group(1);
+        File zip = new File(getCacheDir(), "download.zip");
+        downloadToFile(url, zip, pd, "Downloading Cuis University (~150 MB)");
+        setProgressMsg(pd, "Unzipping…");
+        unzipBundle(zip);
+        zip.delete();
+    }
+
     private void setProgressMsg(final ProgressDialog pd, final String msg) {
         runOnUiThread(() -> { pd.setIndeterminate(true); pd.setMessage(msg); });
     }
@@ -1057,6 +1051,9 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             while ((ze = zis.getNextEntry()) != null) {
                 if (ze.isDirectory()) continue;
                 String base = new File(ze.getName()).getName();
+                // Skip macOS resource-fork entries (__MACOSX/._Foo.image) — they end in
+                // .image too and would clobber the real one with AppleDouble junk.
+                if (base.startsWith("._") || ze.getName().contains("__MACOSX")) continue;
                 String low = base.toLowerCase();
                 File dst;
                 if (low.endsWith(".image")) { dst = new File(getFilesDir(), "Cuis.image"); gotImage = true; }

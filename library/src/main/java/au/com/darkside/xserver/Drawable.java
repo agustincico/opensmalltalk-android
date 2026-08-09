@@ -887,7 +887,12 @@ public class Drawable {
                 int b = io.readByte();
                 int g = io.readByte();
                 int r = io.readByte();
-                colors[i] = (r << 16) | (g << 8) | b;
+                // Force opaque alpha. Android bitmaps are ARGB_8888; without the top
+                // byte every pixel is fully transparent, so a 24-bit PutImage would
+                // draw nothing. (Note: this alone does NOT fix the Cuis ≥7.6/master
+                // blank-world issue — 7.9 still renders blank with it — but it is a
+                // real latent bug for any client that sends 24-bit ZPixmap forms.)
+                colors[i] = 0xff000000 | (r << 16) | (g << 8) | b;
             }
         } else if (depth == 32) {    // 32-bit ZPixmap.
             boolean useShapeMask = (_shapeMask != null && colors.length == _shapeMask.length);
