@@ -266,7 +266,6 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     return;
                 }
                 _vmRunning = true;
-                if (_brandingView != null) _brandingView.setVisibility(View.GONE);
 
                 // Still alive a few seconds later ⇒ the image booted fine.
                 _screenView.postDelayed(() -> {
@@ -300,7 +299,6 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // hardware MENU key and the ActionBar is hidden in fullscreen, so without
         // this there's no way to reach "Load image…" or bring up the keyboard.
         addFloatingControls(fl);
-        addBrandingView(fl);
 
         // Keep what you're typing visible: the soft keyboard overlays the lower half
         // and would hide the text you're editing. When it's up, pan the X view up
@@ -777,40 +775,54 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * Small semi-transparent overlay (top-left) with a menu button and a keyboard
      * button, so the app is usable on phones with no hardware MENU key.
      */
-    private android.widget.LinearLayout _brandingView = null;
-
     /**
-     * "Funded by" + the FAST (Fundación Argentina de Smalltalk) logo, shown on the
-     * startup/chooser screen and hidden once an image is up (the world covers the
-     * screen anyway; it reappears if the app returns to the chooser).
+     * The custom title for the Load-image dialog: the "Load image" heading plus a
+     * dark rounded panel crediting FAST ("Funded by" + the transparent-background
+     * logo), so the funding shows every time the user loads an image — right in the
+     * dialog, framed dark for contrast on the light dialog background.
      */
-    private void addBrandingView(FrameLayout fl) {
-        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
-        box.setOrientation(android.widget.LinearLayout.VERTICAL);
-        box.setGravity(Gravity.CENTER_HORIZONTAL);
+    private View buildLoadImageTitle() {
+        android.widget.LinearLayout root = new android.widget.LinearLayout(this);
+        root.setOrientation(android.widget.LinearLayout.VERTICAL);
+        root.setPadding(dp(22), dp(18), dp(22), dp(4));
 
-        android.widget.TextView label = new android.widget.TextView(this);
-        label.setText("Funded by");
-        label.setTextColor(0xffdddddd);
-        label.setTextSize(14);
-        label.setPadding(0, 0, 0, dp(6));
-        label.setGravity(Gravity.CENTER_HORIZONTAL);
-        box.addView(label);
+        android.widget.TextView heading = new android.widget.TextView(this);
+        heading.setText("Load image");
+        heading.setTextColor(0xff222222);
+        heading.setTextSize(20);
+        heading.setTypeface(heading.getTypeface(), android.graphics.Typeface.BOLD);
+        root.addView(heading);
+
+        android.widget.LinearLayout panel = new android.widget.LinearLayout(this);
+        panel.setOrientation(android.widget.LinearLayout.VERTICAL);
+        panel.setGravity(Gravity.CENTER_HORIZONTAL);
+        panel.setPadding(dp(16), dp(10), dp(16), dp(12));
+        android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
+        bg.setColor(0xff1a1d3a);        // dark navy — matches the logo, frames it on white
+        bg.setCornerRadius(dp(10));
+        panel.setBackground(bg);
+
+        android.widget.TextView funded = new android.widget.TextView(this);
+        funded.setText("Funded by");
+        funded.setTextColor(0xffcccccc);
+        funded.setTextSize(13);
+        funded.setGravity(Gravity.CENTER_HORIZONTAL);
+        funded.setPadding(0, 0, 0, dp(6));
+        panel.addView(funded);
 
         android.widget.ImageView logo = new android.widget.ImageView(this);
         logo.setImageResource(R.drawable.fast_logo);
         logo.setAdjustViewBounds(true);
-        android.widget.LinearLayout.LayoutParams lp =
-                new android.widget.LinearLayout.LayoutParams(dp(220),
-                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-        box.addView(logo, lp);
+        logo.setContentDescription("Fundación Argentina de Smalltalk (FAST)");
+        panel.addView(logo, new android.widget.LinearLayout.LayoutParams(
+                dp(210), android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
-                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
-        flp.bottomMargin = dp(120);   // clear of the collapsed pill
-        fl.addView(box, flp);
-        _brandingView = box;
+        android.widget.LinearLayout.LayoutParams plp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        plp.topMargin = dp(14);
+        root.addView(panel, plp);
+        return root;
     }
 
     private void addFloatingControls(FrameLayout fl) {
@@ -985,8 +997,6 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     private void showLoadImageDialog(String message) {
         if (message != null)
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
-        if (_brandingView != null && !_vmRunning)
-            _brandingView.setVisibility(View.VISIBLE);
         final File[] local = localImages();
         final java.util.ArrayList<String> items = new java.util.ArrayList<>();
         for (File f : local)
@@ -997,7 +1007,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         items.add("From device…");
         if (local.length > 0) items.add("Delete an image…");
         new AlertDialog.Builder(this)
-                .setTitle("Load image")
+                .setCustomTitle(buildLoadImageTitle())
                 .setItems(items.toArray(new String[0]), (dialog, which) -> {
                     if (which < local.length) { openLocalImage(local[which]); return; }
                     int k = which - local.length;
