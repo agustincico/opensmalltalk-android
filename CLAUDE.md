@@ -266,6 +266,32 @@ From the README "Known limitations" plus what the loop surfaced:
    never open submenus; use `input motionevent` DOWN/MOVE/UP press-hold-drag.
    Modal PopUpMenus DO respond to plain taps.)
 
+## Squeak file-in (drop into running image) — OPEN, hard
+
+Cuis file-in-on-drop works (v1.34, XdndSqueakLaunchDrop → DropFilesAction menu).
+**Squeak does NOT**: the launch-drop lands in `MorphicProject>>launchSystemFiles:
+event:` (Squeak reads a drop with no prior in-app drag as a *singleton relaunch*
+and shows "Cannot start a second instance…"). Patching that method is the fix,
+BUT delivery to Squeak failed every way tried (2026-08-10):
+- `-s <file>` is a **Cuis-only** option — Squeak's `DoItFirst` maps it to
+  `#ignore` (verified in SqueakV60.sources). So android-setup.st never runs on
+  Squeak.
+- `--filein <file>` IS honoured by Squeak's DoItFirst, but (a) it does NOT
+  evaluate plain doit chunks (a minimal `(FileStream forceNewFileNamed:…) …!`
+  chunk never ran), and (b) a direct method-definition chunk
+  (`!MorphicProject methodsFor:…!…! !`) **crashed the VM during boot** (app went
+  to the launcher). Also `-ud <dir>` (Cuis opt) leaves a bare `<dir>` token that
+  can derail Squeak's arg parser — pass `--filein` BEFORE `-ud` if retried.
+- Non-ASCII (em-dash) in a filed-in file → "Unmatched comment quote" (chunk
+  reader is byte-oriented). Keep any Squeak-filed file ASCII.
+**The right fix is the FULL XDND drag** (send XdndEnter→Position→Drop + serve the
+XdndSqueakSelection via Selection.java): that sets Squeak's `externalDropMorph`
+so the drop routes to `ExternalDropHandler` (native `.st` file-in) — no image
+patch, and Cuis's DropFilesAction still works. The launch-drop was a shortcut
+that only Cuis tolerates. Reference: sqUnixXdnd.c dndInEnter/Position/Drop +
+dndGetSelection (scratchpad had it). Not yet implemented; risk to the working
+Cuis path, so do it behind a test.
+
 ## Open items from the 2026-08-09 repo audit
 
 Fixed that day (see git log): the `last_error` strcat overflow that SIGABRT'd the

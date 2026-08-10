@@ -1389,57 +1389,25 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     }
 
     /**
-     * <filesDir>/android-setup.st — written fresh on every launch and passed to the
-     * image via -s (it chains pending-filein.st / dev-tests.st itself, so it owns
-     * the single -s slot). It adapts the image to the phone:
-     *
-     * 1. Pre-seeds author initials when unset ('and'/Android): Cuis's initials
-     *    getter otherwise pops a modal request the first time ANY change is
-     *    recorded — including our own patch compile and plain file-ins.
-     * 2. Recompiles DirectoryEntry class>>userDirectory:queryFileName:writeStreamDo:
-     *    to write silently into the image folder instead of asking the user to
-     *    confirm an (inaccessible, app-internal) path. The fileout watcher then
-     *    auto-exports the file to Downloads/OpenSmalltalk/ — so "file out" lands in
-     *    the user's Downloads with no questions asked.
-     *
-     * Everything is looked up via Smalltalk at: #... and wrapped in on:Error, so
-     * images without these classes (Squeak, old Cuis) skip the patches quietly.
+     * Copy assets/android-setup.st into filesDir fresh on every launch. squeak_jni
+     * passes it to the image via -s (it chains pending-filein.st / dev-tests.st
+     * itself, so it owns the single -s slot). The script adapts whichever image is
+     * booting to the phone — Cuis: silent fileOut into the image folder (mirrored to
+     * Downloads) + author-initials preseed; Squeak: file in a dropped .st/.cs in the
+     * running image instead of the singleton-relaunch note. It is plain Smalltalk in
+     * the asset (guarded per-image, errors caught), not a string built here.
      */
     private void writeAndroidSetupScript() {
-        String script =
-            "| de out utils chain |\n"
-          + "de := Smalltalk at: #DirectoryEntry ifAbsent: [ nil ].\n"
-          + "out := Smalltalk at: #StdIOWriteStream ifAbsent: [ nil ].\n"
-          + "utils := Smalltalk at: #Utilities ifAbsent: [ nil ].\n"
-          + "de ifNotNil: [ | files |\n"
-          + "  files := de smalltalkImageDirectory.\n"
-          + "  [ (utils notNil and: [ utils authorInitialsPerSe isNil\n"
-          + "        or: [ utils authorInitialsPerSe isEmpty ] ]) ifTrue: [\n"
-          + "      utils classPool at: #AuthorInitials put: 'and'.\n"
-          + "      utils classPool at: #AuthorName put: 'Android' ].\n"
-          + "    de class\n"
-          + "      compile: 'userDirectory: userDirectoryDefaultName queryFileName: suggestedFileName writeStreamDo: writeBlock\n"
-          + "\t| file |\n"
-          + "\tfile := DirectoryEntry smalltalkImageDirectory // suggestedFileName.\n"
-          + "\tfile forceWriteStreamDo: [ :fileStream |\n"
-          + "\t\tfileStream ifNotNil: [ writeBlock value: fileStream ] ]'\n"
-          + "      classified: 'user default directories'.\n"
-          + "    out ifNotNil: [ out stdout nextPutAll: 'ANDROID-SETUP fileout-patch OK'; newLine; flush ] ]\n"
-          + "    on: Error do: [ :e |\n"
-          + "      out ifNotNil: [ out stdout nextPutAll: 'ANDROID-SETUP patch ERROR ', (e messageText ifNil: [ '?' ]); newLine; flush ] ].\n"
-          + "  chain := [ :name | | f |\n"
-          + "    f := files // name.\n"
-          + "    f exists ifTrue: [\n"
-          + "      [ Compiler evaluate: f textContents ]\n"
-          + "        on: Error do: [ :e |\n"
-          + "          out ifNotNil: [ out stdout nextPutAll: 'ANDROID-SETUP ', name, ' ERROR ', (e messageText ifNil: [ '?' ]); newLine; flush ] ] ] ].\n"
-          + "  chain value: 'pending-filein.st'.\n"
-          + "  chain value: 'dev-tests.st' ].\n";
-        try (FileOutputStream outS = new FileOutputStream(
-                new File(getFilesDir(), "android-setup.st"))) {
-            outS.write(script.getBytes("UTF-8"));
+        copyAssetToFiles("android-setup.st");   // Cuis (-s)
+    }
+
+    private void copyAssetToFiles(String name) {
+        try (InputStream in = getAssets().open(name);
+             FileOutputStream outS = new FileOutputStream(new File(getFilesDir(), name))) {
+            byte[] buf = new byte[8192]; int n;
+            while ((n = in.read(buf)) != -1) outS.write(buf, 0, n);
         } catch (IOException e) {
-            Log.e(TAG, "could not write android-setup.st", e);
+            Log.e(TAG, "could not write " + name, e);
         }
     }
 
@@ -1694,6 +1662,10 @@ private void extractAssets() {
                 // (Auto-extracting here would also race that copy.)
                 if (filename.equals("Cuis.image") || filename.equals("Cuis.changes"))
                     continue;
+                // Written fresh each boot by writeAndroidSetupScript(); don't
+                // leave a stale first-boot copy here.
+                if (filename.equals("android-setup.st"))
+                    continue;
 
                 File destFile = new File(getFilesDir(), filename);
                 if (destFile.exists()) {
@@ -1800,7 +1772,8 @@ private void extractAssets() {
     private void maybeExportFileout(File f, String name) {
         String low = name.toLowerCase();
         boolean isFileout = low.endsWith(".st") || low.endsWith(".cs");
-        if (!isFileout || name.equals("dev-tests.st") || name.equals("pending-filein.st")) return;
+        if (!isFileout || name.equals("dev-tests.st") || name.equals("pending-filein.st")
+                || name.equals("android-setup.st")) return;
         if (_skipExportOnce.remove(name)) return;   // a file WE just imported
         if (!f.isFile() || f.length() == 0) return;
         exportToDownloads(f);

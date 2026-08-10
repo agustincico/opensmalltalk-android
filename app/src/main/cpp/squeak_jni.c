@@ -139,7 +139,7 @@ void* run_squeak_thread(void* arg) {
         LOG("android-setup.st encontrado; se usara como script -s (encadena los demas)");
     }
 
-    char *argv[12];
+    char *argv[16];
     int argc = 0;
     argv[argc++] = (char*)"squeak";
     argv[argc++] = (char*)"-plugins";
@@ -157,7 +157,7 @@ void* run_squeak_thread(void* arg) {
     if (have_dev_st) {
         argv[argc++] = (char*)"-s";
         argv[argc++] = dev_st_path;
-        LOG("dev-tests.st encontrado; agregando: -s %s", dev_st_path);
+        LOG("script -s: %s", dev_st_path);
     }
     argv[argc] = NULL;
 

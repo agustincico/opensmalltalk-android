@@ -318,22 +318,11 @@ public class ScreenView extends View {
         _pixelsPerMillimeter = pixelsPerMillimeter;
         _paint = new Paint();
 
-        // Backlog: pick a legible default zoom for THIS device's physical size
-        // (denser screen -> smaller physical pixels -> more zoom), independent of
-        // raw resolution, so the world is readable from the first launch. The user
-        // can still change it via the Zoom menu.
-        try {
-            int dpi = c.getResources().getDisplayMetrics().densityDpi;
-            // gentle curve above mdpi(160). Round to 0.5 (favouring whole numbers)
-            // and clamp 1.0–3.0: the upscale is nearest-neighbour, so an INTEGER
-            // zoom (e.g. 2×) is pixel-crisp while a fractional one (1.75×) scales
-            // unevenly and looks soft. e.g. 440dpi(emu/Pixel5)->2.0, 320dpi->1.5.
-            float s = 1.0f + (dpi - 160) / 360.0f;
-            s = Math.round(s * 2f) / 2f;
-            _displayScale = Math.max(1.0f, Math.min(3.0f, s));
-        } catch (Exception e) {
-            _displayScale = 1.0f;
-        }
+        // Default zoom is 1.0 (native): the world shows at its real resolution,
+        // which is what responsive images (Cuis University / Dialogo) and modern
+        // HiDPI-aware images want. The user raises it via the ☰ Zoom item for
+        // fixed-size worlds that need bigger, tappable widgets.
+        _displayScale = 1.0f;
 
         mPendingPointerEvents = new PendingEventQueue<PendingPointerEvent>();
         mPendingKeyboardEvents = new PendingEventQueue<PendingKeyboardEvent>();
