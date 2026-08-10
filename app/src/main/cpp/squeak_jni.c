@@ -128,6 +128,17 @@ void* run_squeak_thread(void* arg) {
         LOG("pending-filein.st encontrado; se usara como script -s");
     }
 
+    // Script de adaptación por-boot (lo escribe la app en cada launch): parchea la
+    // imagen para el teléfono (fileout silencioso → Downloads, initials) y ENCADENA
+    // pending-filein.st / dev-tests.st él mismo, así que se lleva el único slot -s.
+    static char setup_st_path[600];
+    snprintf(setup_st_path, sizeof(setup_st_path), "%s/android-setup.st", g_files_dir);
+    if (access(setup_st_path, R_OK) == 0) {
+        snprintf(dev_st_path, sizeof(dev_st_path), "%s", setup_st_path);
+        have_dev_st = 1;
+        LOG("android-setup.st encontrado; se usara como script -s (encadena los demas)");
+    }
+
     char *argv[12];
     int argc = 0;
     argv[argc++] = (char*)"squeak";

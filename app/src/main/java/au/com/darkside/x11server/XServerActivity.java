@@ -246,6 +246,10 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 // image doesn't pop the "Last changes may have been lost" dialog.
                 pruneChangesFile();
 
+                // Fresh per-boot image adaptation script (fileout-to-Downloads patch,
+                // author-initials preseed, script chaining) — see writeAndroidSetupScript.
+                writeAndroidSetupScript();
+
                 // Mark the boot in-progress; a healthy run clears it below. If the VM
                 // aborts on a bad image, this file survives → next launch recovers (a).
                 try { bootPending.createNewFile(); } catch (IOException ignore) {}
@@ -1330,10 +1334,65 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     }
 
     /**
-     * Queue <filesDir>/pending-filein.st: squeak_jni.c passes it to the image via
-     * -s on the next start (Cuis 6+; other images ignore it), and the boot-healthy
-     * timer deletes it so it runs once. The script defers the fileIn until the UI
-     * is up (class definitions too early in startup are unsafe) and reports to
+     * <filesDir>/android-setup.st — written fresh on every launch and passed to the
+     * image via -s (it chains pending-filein.st / dev-tests.st itself, so it owns
+     * the single -s slot). It adapts the image to the phone:
+     *
+     * 1. Pre-seeds author initials when unset ('and'/Android): Cuis's initials
+     *    getter otherwise pops a modal request the first time ANY change is
+     *    recorded — including our own patch compile and plain file-ins.
+     * 2. Recompiles DirectoryEntry class>>userDirectory:queryFileName:writeStreamDo:
+     *    to write silently into the image folder instead of asking the user to
+     *    confirm an (inaccessible, app-internal) path. The fileout watcher then
+     *    auto-exports the file to Downloads/OpenSmalltalk/ — so "file out" lands in
+     *    the user's Downloads with no questions asked.
+     *
+     * Everything is looked up via Smalltalk at: #... and wrapped in on:Error, so
+     * images without these classes (Squeak, old Cuis) skip the patches quietly.
+     */
+    private void writeAndroidSetupScript() {
+        String script =
+            "| de out utils chain |\n"
+          + "de := Smalltalk at: #DirectoryEntry ifAbsent: [ nil ].\n"
+          + "out := Smalltalk at: #StdIOWriteStream ifAbsent: [ nil ].\n"
+          + "utils := Smalltalk at: #Utilities ifAbsent: [ nil ].\n"
+          + "de ifNotNil: [ | files |\n"
+          + "  files := de smalltalkImageDirectory.\n"
+          + "  [ (utils notNil and: [ utils authorInitialsPerSe isNil\n"
+          + "        or: [ utils authorInitialsPerSe isEmpty ] ]) ifTrue: [\n"
+          + "      utils classPool at: #AuthorInitials put: 'and'.\n"
+          + "      utils classPool at: #AuthorName put: 'Android' ].\n"
+          + "    de class\n"
+          + "      compile: 'userDirectory: userDirectoryDefaultName queryFileName: suggestedFileName writeStreamDo: writeBlock\n"
+          + "\t| file |\n"
+          + "\tfile := DirectoryEntry smalltalkImageDirectory // suggestedFileName.\n"
+          + "\tfile forceWriteStreamDo: [ :fileStream |\n"
+          + "\t\tfileStream ifNotNil: [ writeBlock value: fileStream ] ]'\n"
+          + "      classified: 'user default directories'.\n"
+          + "    out ifNotNil: [ out stdout nextPutAll: 'ANDROID-SETUP fileout-patch OK'; newLine; flush ] ]\n"
+          + "    on: Error do: [ :e |\n"
+          + "      out ifNotNil: [ out stdout nextPutAll: 'ANDROID-SETUP patch ERROR ', (e messageText ifNil: [ '?' ]); newLine; flush ] ].\n"
+          + "  chain := [ :name | | f |\n"
+          + "    f := files // name.\n"
+          + "    f exists ifTrue: [\n"
+          + "      [ Compiler evaluate: f textContents ]\n"
+          + "        on: Error do: [ :e |\n"
+          + "          out ifNotNil: [ out stdout nextPutAll: 'ANDROID-SETUP ', name, ' ERROR ', (e messageText ifNil: [ '?' ]); newLine; flush ] ] ] ].\n"
+          + "  chain value: 'pending-filein.st'.\n"
+          + "  chain value: 'dev-tests.st' ].\n";
+        try (FileOutputStream outS = new FileOutputStream(
+                new File(getFilesDir(), "android-setup.st"))) {
+            outS.write(script.getBytes("UTF-8"));
+        } catch (IOException e) {
+            Log.e(TAG, "could not write android-setup.st", e);
+        }
+    }
+
+    /**
+     * Queue <filesDir>/pending-filein.st: android-setup.st evaluates it on the next
+     * image start (Cuis 6+; other images ignore it), and the boot-healthy timer
+     * deletes it so it runs once. The script defers the fileIn until the UI is up
+     * (class definitions too early in startup are unsafe) and reports to
      * stdout → logcat either way.
      */
     private void writePendingFileIn(String fileName) {
