@@ -4,7 +4,11 @@ Guidance for working in **opensmalltalk-android**: run any OpenSmalltalk/Cuis
 image (and the *Dialogo* app) on Android as a native APK — no Termux. Interpreted
 **Stack VM** loaded via JNI (`app/src/main/cpp/squeak_jni.c`) + an embedded X11
 server (fork of android-xserver-enhanced, in `library/`) that renders Smalltalk
-into an Android View. Boot activity: `au.com.darkside.x11server.XServerActivity`.
+into an Android View. Application ID: **`ar.com.opensmalltalk`** (reverse-DNS of the
+user's opensmalltalk.com.ar; changed 2026-08-10 — the old `au.com.darkside.x11server`
+identity is a different app to Android, so it needed a fresh install). The Java
+packages KEEP the fork's original `au.com.darkside.*` namespace (attribution + JNI
+symbol stability); boot activity class: `au.com.darkside.x11server.XServerActivity`.
 
 This file documents the **low-intervention dev loop** in `scripts/loop/`: compile
 → deploy to an emulator → observe (screen + logs) → test, with no manual

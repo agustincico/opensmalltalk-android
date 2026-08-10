@@ -22,8 +22,8 @@ REPO_ROOT="$(cd "$LOOP_DIR/../.." && pwd)"
 export LOOP_DIR REPO_ROOT
 
 # --- project config (override via env) ------------------------------------
-export PKG="${PKG:-au.com.darkside.x11server}"
-export ACTIVITY="${ACTIVITY:-.XServerActivity}"
+export PKG="${PKG:-ar.com.opensmalltalk}"
+export ACTIVITY="${ACTIVITY:-au.com.darkside.x11server.XServerActivity}"
 export AVD_NAME="${AVD_NAME:-cuis-arm64}"
 export AVD_DEVICE="${AVD_DEVICE:-pixel_5}"
 export ABI="${ABI:-arm64-v8a}"
