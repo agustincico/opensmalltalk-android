@@ -266,6 +266,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     return;
                 }
                 _vmRunning = true;
+                if (_brandingView != null) _brandingView.setVisibility(View.GONE);
 
                 // Still alive a few seconds later ⇒ the image booted fine.
                 _screenView.postDelayed(() -> {
@@ -299,6 +300,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // hardware MENU key and the ActionBar is hidden in fullscreen, so without
         // this there's no way to reach "Load image…" or bring up the keyboard.
         addFloatingControls(fl);
+        addBrandingView(fl);
 
         // Keep what you're typing visible: the soft keyboard overlays the lower half
         // and would hide the text you're editing. When it's up, pan the X view up
@@ -775,6 +777,42 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * Small semi-transparent overlay (top-left) with a menu button and a keyboard
      * button, so the app is usable on phones with no hardware MENU key.
      */
+    private android.widget.LinearLayout _brandingView = null;
+
+    /**
+     * "Funded by" + the FAST (Fundación Argentina de Smalltalk) logo, shown on the
+     * startup/chooser screen and hidden once an image is up (the world covers the
+     * screen anyway; it reappears if the app returns to the chooser).
+     */
+    private void addBrandingView(FrameLayout fl) {
+        android.widget.LinearLayout box = new android.widget.LinearLayout(this);
+        box.setOrientation(android.widget.LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+
+        android.widget.TextView label = new android.widget.TextView(this);
+        label.setText("Funded by");
+        label.setTextColor(0xffdddddd);
+        label.setTextSize(14);
+        label.setPadding(0, 0, 0, dp(6));
+        label.setGravity(Gravity.CENTER_HORIZONTAL);
+        box.addView(label);
+
+        android.widget.ImageView logo = new android.widget.ImageView(this);
+        logo.setImageResource(R.drawable.fast_logo);
+        logo.setAdjustViewBounds(true);
+        android.widget.LinearLayout.LayoutParams lp =
+                new android.widget.LinearLayout.LayoutParams(dp(220),
+                        android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+        box.addView(logo, lp);
+
+        FrameLayout.LayoutParams flp = new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL);
+        flp.bottomMargin = dp(120);   // clear of the collapsed pill
+        fl.addView(box, flp);
+        _brandingView = box;
+    }
+
     private void addFloatingControls(FrameLayout fl) {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -947,12 +985,14 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     private void showLoadImageDialog(String message) {
         if (message != null)
             Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+        if (_brandingView != null && !_vmRunning)
+            _brandingView.setVisibility(View.VISIBLE);
         final File[] local = localImages();
         final java.util.ArrayList<String> items = new java.util.ArrayList<>();
         for (File f : local)
             items.add(imageBase(f.getName()) + "  (on device)");
         items.add("Squeak (download)");
-        items.add("Cuis 7.7 (download)");
+        items.add("Cuis (download)");
         items.add("Cuis University (download)");
         items.add("From device…");
         if (local.length > 0) items.add("Delete an image…");
