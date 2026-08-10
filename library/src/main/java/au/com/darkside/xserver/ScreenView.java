@@ -1949,6 +1949,17 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
                 w = (Window) r;
         }
 
+        // Diagnostic: the VM answers our synthetic XDND messages by SendEvent-ing
+        // ClientMessages (XdndStatus/XdndFinished/XdndSqueakLaunchAck) back to the
+        // clientless source window — log them so drop handshakes are observable.
+        if (w != null && w.isServerWindow() && event[0] == EventCode.ClientMessage) {
+            int typeAtom = ((event[8] & 0xff)) | ((event[9] & 0xff) << 8)
+                    | ((event[10] & 0xff) << 16) | ((event[11] & 0xff) << 24);
+            Atom ta = _xServer.getAtom(typeAtom);
+            Log.i("ScreenView", "SendEvent to server window: ClientMessage "
+                    + (ta != null ? ta.getName() : ("atom#" + typeAtom)));
+        }
+
         Vector<Client> dc = null;
 
         if (mask == 0) {
@@ -2333,6 +2344,107 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     /**
  * Notifica a todos los clientes que la pantalla cambió de tamaño
  */
+/**
+ * Drop a file onto the client's top-level window via a synthesized XDND
+ * handshake, exactly as a desktop drag-and-drop would: the client (the
+ * Smalltalk VM's X window, which sets XdndAware) receives XdndEnter →
+ * XdndPosition → XdndDrop from us, requests the XdndSelection contents
+ * (answered by the existing server-window selection path in Selection.java
+ * with a text/uri-list pointing at the file), and hands the image a
+ * DropFiles event — the image then decides what to do with the file.
+ *
+ * Returns false when there is no XdndAware client window or the XDND atoms
+ * aren't interned (VM built with -noxdnd) — callers should fall back to
+ * another delivery mechanism.
+ */
+public boolean dropFile(final String path) {
+    try {
+        if (_xServer == null || !_xServer.isStarted() || _rootWindow == null) return false;
+
+        final Atom aSelection = _xServer.findAtom("XdndSelection");
+        final Atom aEnter = _xServer.findAtom("XdndEnter");
+        final Atom aPosition = _xServer.findAtom("XdndPosition");
+        final Atom aDrop = _xServer.findAtom("XdndDrop");
+        final Atom aActionCopy = _xServer.findAtom("XdndActionCopy");
+        final Atom aUriList = _xServer.findAtom("text/uri-list");
+        final Atom aAware = _xServer.findAtom("XdndAware");
+        if (aSelection == null || aEnter == null || aPosition == null || aDrop == null
+                || aActionCopy == null || aUriList == null || aAware == null) {
+            Log.w("ScreenView", "dropFile: XDND atoms not interned — client has no XDND support");
+            return false;
+        }
+
+        // The drop target: a viewable client top-level that declared XdndAware.
+        Window target = null;
+        Vector<Window> children = _rootWindow.getChildren();
+        if (children != null) {
+            for (Window c : children) {
+                if (c != null && c.isViewable() && c.getClient() != null
+                        && c.getProperty(aAware.getId()) != null) {
+                    target = c;
+                    break;
+                }
+            }
+        }
+        if (target == null) {
+            Log.w("ScreenView", "dropFile: no XdndAware client window");
+            return false;
+        }
+
+        // The VM implements a Squeak-specific simplified drop for exactly this
+        // case (sqUnixXdnd.c dndInLaunchDrop, "leaves out the 8 step dance"):
+        // the absolute path goes in the XdndSqueakLaunchDrop property ON THE
+        // SOURCE window (type XA_ATOM(!), format 8, trailing NUL included) and
+        // one ClientMessage with data.l[0] = source window announces it. The VM
+        // reads the property, records the image DropFiles event itself, and
+        // acks with XdndSqueakLaunchAck (visible in our SendEvent log).
+        final Atom aLaunchDrop = _xServer.findAtom("XdndSqueakLaunchDrop");
+        if (aLaunchDrop == null) {
+            Log.w("ScreenView", "dropFile: XdndSqueakLaunchDrop not interned");
+            return false;
+        }
+        byte[] pathZ = (path + "\0").getBytes(StandardCharsets.UTF_8);
+        Property prop = _sharedClipboardWindow.getProperty(aLaunchDrop.getId());
+        if (prop == null) {
+            prop = new Property(aLaunchDrop.getId(), 4 /* XA_ATOM */, (byte) 8);
+            _sharedClipboardWindow.addProperty(prop);
+        }
+        prop.setData(pathZ);
+        prop.setType(4 /* XA_ATOM — what the VM's XGetWindowProperty insists on */);
+
+        // The image dispatches the drop AT THE POINTER POSITION (and rejects it
+        // outright when that position is outside the world). Park the pointer
+        // around the upper-middle of the screen first so the "Select action"
+        // menu is always visible. Two moves: the first may only produce
+        // Enter/Leave (window change), only the second — same window, different
+        // coords — is guaranteed to emit the MotionNotify the VM tracks.
+        try {
+            int cx = logicalWidth() / 2, cy = logicalHeight() / 3;
+            updatePointerPosition(cx, cy - 8, 0);
+            updatePointerPosition(cx, cy, 0);
+        } catch (Exception e) {
+            Log.w("ScreenView", "dropFile: could not center pointer: " + e.getMessage());
+        }
+
+        final Client client = target.getClient();
+        final Window w = target;
+        // Give the pointer motion a beat to reach the VM before the drop.
+        postDelayed(() -> {
+            try {
+                EventCode.sendClientMessage32(client, w, aLaunchDrop,
+                        _sharedClipboardWindow.getId(), 0, 0, 0, 0);
+                Log.i("ScreenView", "dropFile: XdndSqueakLaunchDrop sent for " + path);
+            } catch (Exception e) {
+                Log.e("ScreenView", "dropFile launch-drop send: " + e.getMessage(), e);
+            }
+        }, 250);
+        return true;
+    } catch (Exception e) {
+        Log.e("ScreenView", "dropFile failed: " + e.getMessage(), e);
+        return false;
+    }
+}
+
 private void notifyClientsScreenResize(int width, int height) {
     if (_rootWindow == null) return;
     

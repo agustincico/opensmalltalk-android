@@ -140,11 +140,13 @@ Zoom renders the X screen at `physical / zoom` and scales it up with nearest-nei
   permission needed; re-fileouts overwrite the copy), so your code leaves the app's private
   storage automatically.
 - **File in code: ☰ → *File in code (.st)…*** picks a `.st`/`.cs` from the device, copies it
-  into the image folder, and queues it to **file in when the image starts** (restart now, or
-  pick it up on the next start — the result is reported to logcat as `FILEIN OK/ERROR`).
-  This is the practical route on Android: the in-image FileList can't browse outside the
-  app sandbox, so it never reaches your Downloads. Needs an image that honours the `-s`
-  startup-script option (Cuis 6 and later; other images ignore the queued file).
+  into the image folder, and **drops it into the RUNNING image like a desktop drag-and-drop**
+  (the embedded X server synthesizes the VM's XDND launch-drop). The image itself decides
+  what to do — Cuis pops its *"Select action for …"* menu (browse code / open code changes /
+  **file in**) right at the centred pointer. No restart, no interruption. If no image is
+  running yet, the pick is queued instead and files in on the next image start
+  (`FILEIN OK/ERROR` in logcat). The in-image FileList can't browse outside the app sandbox,
+  so this is the way to bring code in.
 - Images live in the app's **private** storage (`filesDir`). **Save Image works** (verified on
   Cuis 7.5: the file is rewritten and the saved state boots again). Exporting the `.image`
   itself is still pending — see [Known limitations](#known-limitations).

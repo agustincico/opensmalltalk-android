@@ -1303,6 +1303,19 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             Toast.makeText(this, "Could not store the selected file.", Toast.LENGTH_LONG).show();
             return;
         }
+        // Preferred: synthesize a desktop-style drag-and-drop of the file onto the
+        // RUNNING image (XDND) — no restart, and the image itself decides what to
+        // do with the drop, exactly like on a desktop.
+        boolean dropped = false;
+        if (_vmRunning) {
+            try { dropped = _xServer.getScreen().dropFile(dst.getAbsolutePath()); }
+            catch (Exception e) { Log.e(TAG, "XDND drop failed", e); }
+        }
+        if (dropped) {
+            Toast.makeText(this, "Dropped " + fname + " into the image.", Toast.LENGTH_LONG).show();
+            return;
+        }
+        // Fallback (VM not running / image without XDND): queue a startup file-in.
         writePendingFileIn(fname);
         new AlertDialog.Builder(this)
                 .setTitle("File in " + fname)

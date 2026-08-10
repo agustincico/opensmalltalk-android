@@ -181,7 +181,12 @@ From the README "Known limitations" plus what the loop surfaced:
    phone too; the image boots + responds to taps but never draws — an upstream
    Cuis compat issue). So *"Cuis 7.5 (download)"* fetches the stable base tag
    (`?ref=%23BaseForCuis7.6` → Cuis7.5-7775 + Cuis7.4.sources), which renders +
-   runs; 7.5 / Squeak 6.0 / bundled Cuis are all fine.
+   runs; 7.5 / Squeak 6.0 / bundled Cuis are all fine. **TODO lead (from the
+   user, 2026-08-09):** they recall once changing a parameter of the image/pixel
+   format the server transmits which fixed a white screen — investigate what the
+   embedded X server ADVERTISES (root visual depth/masks, PutImage formats) vs
+   what Cuis ≥7.6 requests; the 24-bit-ZPixmap alpha fix (Drawable.java) was
+   real but insufficient.
    **Bad image no longer bricks the app:** a 32-bit image made the 64-bit VM abort
    the process every launch (unusable until reinstall). Startup now rejects 32-bit
    images (format-magic 6521/6505/6504) up front and uses a `.boot_pending`
@@ -223,19 +228,28 @@ From the README "Known limitations" plus what the loop surfaced:
    MIME type on insert — text/plain makes MediaStore rename `.st` → `.st.txt`).
    **Remaining gap:** the `.image` itself still can't leave the phone (a future
    "Export image" share-sheet / SAF copy).
-   **File in (2026-08-09):** ☰ → *File in code (.st)…* → SAF pick → copy into
-   filesDir → write `pending-filein.st`, which `squeak_jni.c` passes via `-s`
-   (priority over dev-tests.st) on the next start; the script defers the fileIn
-   with `UISupervisor whenUIinSafeState:` (class defs too early in startup are
-   unsafe) and prints `FILEIN OK/ERROR` to stdout→logcat; the boot-healthy timer
-   deletes it (runs once). Verified on Cuis 7.5 (probe .st evaluated, value read
-   back). Cuis 6+ only (-s); Squeak ignores it. **Why not FileList:** it opens at
-   `/` which the app can't enumerate, and the sandbox is unreachable from it —
-   diagnosed with motionevent DOWN/MOVE/UP drags (tap alone never opens Cuis
-   submenus; press-hold-drag does). A real XDND drop (the X server as DND source
-   synthesizing XdndEnter/Position/Drop + the existing server-window selection
-   path in Selection.java) is the future no-restart route — vm-display-X11.so
-   has Xdnd compiled in.
+   **File in (2026-08-09, v1.34 = instant drop):** ☰ → *File in code (.st)…* →
+   SAF pick → copy into filesDir → `ScreenView.dropFile()` synthesizes the VM's
+   **XdndSqueakLaunchDrop** ("leaves out the 8 step dance", sqUnixXdnd.c r3732):
+   the absolute path goes in a property of that name ON OUR clientless clipboard
+   server window (type XA_ATOM(!), format 8, trailing NUL) and ONE ClientMessage
+   with data.l[0]=source-window-id announces it; the VM reads the property
+   (observable via the XProperty GetProperty log), records the image DropFiles
+   event itself, and acks. **Two gotchas, both learned the hard way:** (1) the
+   image dispatches the drop AT THE VM's LAST MOUSE POSITION and
+   `DropFilesEvent>>dispatchWith:` REJECTS positions outside the world — so
+   dropFile warps the pointer to (w/2, h/3) first; (2) that warp must be TWO
+   `updatePointerPosition` calls (first may emit only Enter/Leave on window
+   change; only the second, same-window move emits the MotionNotify the VM
+   tracks). Cuis pops "Select action for <file>" (browse code / open code
+   changes / file in) at the pointer — tap "file in" and the code runs in the
+   LIVE image (verified: FILEINPROBE done value=42, no restart). Fallback when
+   no VM runs: `pending-filein.st` via the `-s` hook (priority over
+   dev-tests.st; consumed by the boot-healthy timer; Cuis 6+ only).
+   **Why not FileList:** it opens at `/` which the app can't enumerate, and the
+   sandbox is unreachable from it. (Driving Cuis menus in tests: taps alone
+   never open submenus; use `input motionevent` DOWN/MOVE/UP press-hold-drag.
+   Modal PopUpMenus DO respond to plain taps.)
 
 ## Open items from the 2026-08-09 repo audit
 
