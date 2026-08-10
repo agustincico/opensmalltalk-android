@@ -914,6 +914,9 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     // Backlog #1: the world otherwise renders at its saved (smaller) size until
     // the first device rotation. Once a client has mapped its top-level window,
     // apply the same resize a rotation would — once — so it's fullscreen from start.
+    // (Tested NOT to be what breaks Cuis >=7983 — those images stall with the
+    // resize disabled too; their reworked startup never launches the UI process
+    // on this VM. See CLAUDE.md "Cuis master blank world".)
     ensureInitialFullscreen();
 }
 

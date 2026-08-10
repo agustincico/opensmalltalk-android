@@ -948,7 +948,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         for (File f : local)
             items.add(imageBase(f.getName()) + "  (on device)");
         items.add("Squeak (download)");
-        items.add("Cuis 7.5 (download)");
+        items.add("Cuis 7.7 (download)");
         items.add("Cuis University (download)");
         items.add("From device…");
         if (local.length > 0) items.add("Delete an image…");
@@ -1122,12 +1122,13 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 
     private String downloadCuis(ProgressDialog pd) throws Exception {
         setProgressMsg(pd, "Finding image…");
-        // Pin to the stable base tag (currently Cuis 7.5-7775) rather than master
-        // HEAD: the bleeding-edge dev image (Cuis 7.9-8090) boots but renders a blank
-        // white world on our embedded X server. 7.5 renders + runs fine. The tag name
-        // starts with '#', URL-encoded as %23. The download_url values the API returns
-        // are already correctly encoded for this ref.
-        String ref = "%23BaseForCuis7.6";
+        // Pin to the newest base tag that WORKS (currently Cuis 7.7-7976 at
+        // #BaseForCuis7.8) rather than master HEAD: every rolling 7.9 snapshot from
+        // 7983 through 8090 never starts its UI on this VM (idle process only — the
+        // 2026 startup-sequence rework; upstream fixed it in updates 8093/8094 AFTER
+        // the 8090 snapshot). Retest master when a newer rolling image lands. The
+        // tag name starts with '#', URL-encoded as %23.
+        String ref = "%23BaseForCuis7.8";
         String json = httpGetString(
                 "https://api.github.com/repos/Cuis-Smalltalk/Cuis-Smalltalk-Dev/contents/CuisImage?ref=" + ref);
         Matcher entry = Pattern.compile(

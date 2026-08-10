@@ -91,9 +91,11 @@ The three stripped libraries' versions come from the source device itself: its T
 `pkg list-installed` (captured 2026-08-09; the binaries were harvested 2026-07-22 from the
 same installation, so a minor point-release drift is possible but unlikely). All native
 libraries were cross-compiled with the **Android NDK clang 19.0.1** (LLD 19.0.1),
-per the compiler banner in the binaries. The VM itself is `opensmalltalk-vm` release tag
-**`r3732`**, `squeak.stack.spur` flavour; the display/sound plugins are from a `squeak.cog.spur`
-tree — see [docs/BUILDING-VM.md](docs/BUILDING-VM.md#provenance-read-from-strings-in-the-binaries).
+per the compiler banner in the binaries. The VM itself is `opensmalltalk-vm`
+**7.0rc2-202511100848** (StackInterpreter VMMaker.oscog-eem.3682, upstream commit
+`d621595`, built Nov 12 2025 under Termux), `squeak.stack.spur` flavour; the
+display/sound plugins are from a `squeak.cog.spur` tree —
+see [docs/BUILDING-VM.md](docs/BUILDING-VM.md#provenance-read-from-strings-in-the-binaries).
 
 ## How to help
 

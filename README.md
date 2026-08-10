@@ -16,7 +16,7 @@ Current release: **[v1.31](https://github.com/agustincico/opensmalltalk-android/
 
 - **Signed installable releases** (no more debug-mode sideloading); same key every release,
   so they update in place — [Obtainium](https://github.com/ImranR98/Obtainium)-friendly.
-- **Download-first startup chooser**: Squeak 6.0, Cuis 7.5, **Cuis University** (new), or an
+- **Download-first startup chooser**: Squeak 6.0, Cuis 7.7, **Cuis University**, or an
   image from the device — nothing bundled in the APK.
 - **Full provenance of the shipped native binaries** recovered and documented
   ([THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md), [docs/BUILDING-VM.md](docs/BUILDING-VM.md)).
@@ -32,10 +32,10 @@ Verified on a Samsung Galaxy A12 (ARM64, Android 10) and on an ARM64 emulator
 | Image | Result |
 |---|---|
 | Cuis 5.0-4507, Cuis 6.0-6053, CuisUniversity-6350 | boots + runs |
-| **Cuis 7.5-7775** (what the in-app download fetches) | boots + runs |
+| **Cuis 7.7-7976** (what the in-app download fetches) | boots + runs |
 | **Squeak 6.0-22156 (64-bit)** | boots + runs |
 | Dialogo (custom app image) | boots + runs |
-| Cuis 7.9-8090 / master | boots but **renders a blank white world** (upstream compat issue) |
+| Cuis 7.9 rolling snapshots (7983–8090 incl. master) | boot but **never start their UI** on this VM (blank world; the mid-2026 startup rework — upstream fixed it in updates 8093/8094 AFTER the current snapshot; retest when a newer rolling image lands) |
 
 ## Requirements
 
@@ -54,7 +54,7 @@ Verified on a Samsung Galaxy A12 (ARM64, Android 10) and on an ARM64 emulator
 3. Open **OpenSmalltalk**. On first launch it shows a **Load image** dialog — it does
    *not* auto-boot anything:
    - **Squeak (download)** — newest `Squeak6.0-<build>-64bit` from files.squeak.org
-   - **Cuis 7.5 (download)** — the stable Cuis base (see [Loading images](#loading-images))
+   - **Cuis 7.7 (download)** — the newest Cuis base that runs here (see [Loading images](#loading-images))
    - **Cuis University (download)** — the latest [Cuis University](https://sites.google.com/view/cuis-university)
      release (image + changes + sources from its platform bundle)
    - **From device…** — pick a `.image` you already have (no storage permission needed)
@@ -123,8 +123,9 @@ Zoom renders the X screen at `physical / zoom` and scales it up with nearest-nei
 ## Loading images
 
 - **Downloads.** Squeak scrapes `files.squeak.org/6.0/` for the newest 64-bit build.
-  Cuis is **pinned to the stable base tag** `#BaseForCuis7.6` (Cuis 7.5-7775 + `Cuis7.4.sources`)
-  because Cuis master/7.9 boots but renders blank on the embedded X server.
+  Cuis is **pinned to the newest base tag that works** — `#BaseForCuis7.8` (Cuis 7.7-7976 +
+  `Cuis7.6.sources`) — because every 7.9 rolling snapshot so far (7983–8090) never starts
+  its UI on this VM (see Known limitations).
   Cuis University resolves the latest release of
   [Cuis-University/Cuis-University](https://github.com/Cuis-University/Cuis-University) and
   extracts image + changes + sources from its platform zip.
@@ -253,7 +254,7 @@ included. No submodules.
 `*.image` / `*.changes` / `*.sources` are gitignored (they are large binaries) and the app
 deliberately bundles **no** offline image — every image is downloaded (or picked from the
 device) at first launch via the **Load image** chooser. So a fresh clone builds the exact
-same APK as the official release, and the download options (Squeak / Cuis 7.5 /
+same APK as the official release, and the download options (Squeak / Cuis 7.7 /
 Cuis University) are the supported way to get an image onto the device.
 
 ### Release builds
@@ -308,7 +309,10 @@ See: https://github.com/agustincico/android-xserver-enhanced
   `Downloads/OpenSmalltalk/` — and *Save Image as…* under a new name now appears in the
   in-app library.)
 - **UI preferences reset on restart** (zoom, trackpad, precise pointer, …).
-- **Cuis master / 7.9 renders a blank world**; the in-app download is pinned to 7.5.
+- **Cuis 7.9 rolling snapshots (7983–8090) never start their UI here** (blank world, only the
+  idle process runs — the mid-2026 startup-sequence rework; upstream already fixed it in
+  updates 8093/8094, newer than the current master snapshot). The in-app download is pinned
+  to 7.7-7976, the newest base that works; retest master when a new rolling image lands.
 - **Fine targets** (window resize edges, pane dividers) remain fiddly with a finger.
 - **The in-image FileList is of limited use**: it opens at `/`, which an Android app cannot
   enumerate, and it can never browse outside the app sandbox. Use **☰ → File in code (.st)…**

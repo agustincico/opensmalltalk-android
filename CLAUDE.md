@@ -179,14 +179,25 @@ From the README "Known limitations" plus what the loop surfaced:
    **Cuis download pinned to a stable version:** master HEAD (Cuis 7.9-8090)
    renders a **blank white world** on the embedded X server (confirmed on a real
    phone too; the image boots + responds to taps but never draws — an upstream
-   Cuis compat issue). So *"Cuis 7.5 (download)"* fetches the stable base tag
-   (`?ref=%23BaseForCuis7.6` → Cuis7.5-7775 + Cuis7.4.sources), which renders +
-   runs; 7.5 / Squeak 6.0 / bundled Cuis are all fine. **TODO lead (from the
-   user, 2026-08-09):** they recall once changing a parameter of the image/pixel
-   format the server transmits which fixed a white screen — investigate what the
-   embedded X server ADVERTISES (root visual depth/masks, PutImage formats) vs
-   what Cuis ≥7.6 requests; the 24-bit-ZPixmap alpha fix (Drawable.java) was
-   real but insufficient.
+   Cuis compat issue). **DIAGNOSED 2026-08-10** (bisect with rolling snapshots +
+   native backtraces + a 27-agent source sweep): NOT a pixel-format problem.
+   Cuis7.7-7976 (tag `#BaseForCuis7.8`) works perfectly; every 7.9 rolling
+   snapshot (7983, 8064, 8090=master) **never launches its UI process** on this
+   VM — a SEGV-triggered VM stack dump shows only `ProcessorScheduler
+   idleProcess` running; no world draw, no `-s` script processing, and 8064+
+   additionally exception-storm (`primitiveFindHandlerContext` spinning at ~95%
+   CPU). Cause: the mid-2026 **startup-sequence rework** (updates 8042/8056/8088
+   area) interacting with this platform; upstream shipped startup FIXES
+   8093/8094 days AFTER the 8090 snapshot, so current master is a known
+   mid-rework image. NOT the culprit (all tested): missing .sources, image
+   header/format (identical), our post-startup fullscreen resize (disabled →
+   still blank), 24-bit alpha. So *"Cuis 7.7 (download)"* now fetches
+   `?ref=%23BaseForCuis7.8` (Cuis7.7-7976 + Cuis7.6.sources). **Retest master
+   when Cuis publishes a rolling image containing ≥8094.** Diagnostic tooling
+   left in the tree: XPutImage logs (Drawable, budget-limited) and — trick worth
+   remembering — `kill -SEGV <interpreter TID>` makes the VM print the Smalltalk
+   stack to logcat (find the TID via `debuggerd -b`; plain SIGUSR1 is eaten by
+   ART).
    **Bad image no longer bricks the app:** a 32-bit image made the 64-bit VM abort
    the process every launch (unusable until reinstall). Startup now rejects 32-bit
    images (format-magic 6521/6505/6504) up front and uses a `.boot_pending`

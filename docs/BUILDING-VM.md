@@ -18,7 +18,12 @@ Only **`libsqueak_jni.so` is built by this repo's build system** (from
 
 - **`libsqueak.so`** — built from an `opensmalltalk-vm` checkout at
   `/data/data/com.termux/files/home/opensmalltalk-vm`, **Stack/Spur** flavour
-  (`squeak.stack.spur`), referencing upstream release tag **`r3732`**.
+  (`squeak.stack.spur`). The VM's own crash banner (obtained live 2026-08-10) pins it
+  exactly: **`Squeak VM version: 7.0rc2-202511100848`**, built **Nov 12 2025** with clang,
+  `StackInterpreter VMMaker.oscog-eem.3682`, upstream **commit `d621595`**
+  (Mon Nov 10 2025), `Plugins: 202511100848`, build host Termux/Android aarch64.
+  (The `r3732` string found earlier via `strings` is just release-notes URL text baked
+  into a help banner — the real revision is the above.)
   It is the VM's `squeak` **executable, renamed**; `squeak_jni.c` `dlopen()`s it and enters
   through `dlsym(handle, "main")`.
 - **The plugins** — built from a *different* checkout,

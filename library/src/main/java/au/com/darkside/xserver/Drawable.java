@@ -23,6 +23,9 @@ public class Drawable {
     private Bitmap _backgroundBitmap;
     private int _backgroundColor;
     private boolean[] _shapeMask = null;
+    // Shared budget for PutImage diagnostics (first N events per process): enough
+    // to see what depth/format a client negotiates without flooding at frame rate.
+    private static int _putImageLogBudget = 40;
 
     private static final byte BITMAP_FORMAT = 0;
     private static final byte XY_PIXMAP_FORMAT = 1;
@@ -785,7 +788,11 @@ public class Drawable {
         }
 
         if (badMatch) {
-            // Log.d("processPutImage", "Bad match depth: " + depth + " leftPad: " + leftPad);
+            if (_putImageLogBudget > 0) {
+                _putImageLogBudget--;
+                android.util.Log.w("XPutImage", "BadMatch: format=" + format + " depth=" + depth
+                        + " drawableDepth=" + _depth + " leftPad=" + leftPad + " " + width + "x" + height);
+            }
             io.readSkip(bytesRemaining);
             ErrorCode.write(client, ErrorCode.Match, RequestCode.PutImage, 0);
             return false;
@@ -813,10 +820,21 @@ public class Drawable {
         pad = -n & 3;
 
         if (bytesRemaining != n + pad) {
-            // Log.d("processPutImage", "bytesRemaining: " + bytesRemaining + " n: " + n + " pad: " + pad);
+            if (_putImageLogBudget > 0) {
+                _putImageLogBudget--;
+                android.util.Log.w("XPutImage", "BadLength: format=" + format + " depth=" + depth
+                        + " " + width + "x" + height + " bytesRemaining=" + bytesRemaining
+                        + " expected n=" + n + " pad=" + pad
+                        + " (bytes/pixel≈" + (width * height > 0 ? (float) bytesRemaining / (width * height) : 0) + ")");
+            }
             io.readSkip(bytesRemaining);
             ErrorCode.write(client, ErrorCode.Length, RequestCode.PutImage, 0);
             return false;
+        }
+        if (_putImageLogBudget > 0) {
+            _putImageLogBudget--;
+            android.util.Log.i("XPutImage", "ok: format=" + format + " depth=" + depth
+                    + " " + width + "x" + height + " bytes=" + bytesRemaining);
         }
 
         int[] colors;
