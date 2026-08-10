@@ -786,28 +786,23 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         root.setOrientation(android.widget.LinearLayout.VERTICAL);
         root.setPadding(dp(22), dp(18), dp(22), dp(4));
 
-        android.widget.TextView heading = new android.widget.TextView(this);
-        heading.setText("Load image");
-        heading.setTextColor(0xff222222);
-        heading.setTextSize(20);
-        heading.setTypeface(heading.getTypeface(), android.graphics.Typeface.BOLD);
-        root.addView(heading);
-
+        // Credit panel first (dark, framing the transparent logo): the funding line
+        // above the logo, then the FAST logo.
         android.widget.LinearLayout panel = new android.widget.LinearLayout(this);
         panel.setOrientation(android.widget.LinearLayout.VERTICAL);
         panel.setGravity(Gravity.CENTER_HORIZONTAL);
-        panel.setPadding(dp(16), dp(10), dp(16), dp(12));
+        panel.setPadding(dp(16), dp(12), dp(16), dp(12));
         android.graphics.drawable.GradientDrawable bg = new android.graphics.drawable.GradientDrawable();
         bg.setColor(0xff1a1d3a);        // dark navy — matches the logo, frames it on white
         bg.setCornerRadius(dp(10));
         panel.setBackground(bg);
 
         android.widget.TextView funded = new android.widget.TextView(this);
-        funded.setText("Funded by");
-        funded.setTextColor(0xffcccccc);
+        funded.setText("OpenSmalltalk for Android is funded by");
+        funded.setTextColor(0xffdddddd);
         funded.setTextSize(13);
         funded.setGravity(Gravity.CENTER_HORIZONTAL);
-        funded.setPadding(0, 0, 0, dp(6));
+        funded.setPadding(0, 0, 0, dp(8));
         panel.addView(funded);
 
         android.widget.ImageView logo = new android.widget.ImageView(this);
@@ -817,11 +812,21 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         panel.addView(logo, new android.widget.LinearLayout.LayoutParams(
                 dp(210), android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
 
-        android.widget.LinearLayout.LayoutParams plp = new android.widget.LinearLayout.LayoutParams(
+        root.addView(panel, new android.widget.LinearLayout.LayoutParams(
                 android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT));
+
+        // "Load image" heading BELOW the logo.
+        android.widget.TextView heading = new android.widget.TextView(this);
+        heading.setText("Load image");
+        heading.setTextColor(0xff222222);
+        heading.setTextSize(20);
+        heading.setTypeface(heading.getTypeface(), android.graphics.Typeface.BOLD);
+        android.widget.LinearLayout.LayoutParams hlp = new android.widget.LinearLayout.LayoutParams(
+                android.widget.LinearLayout.LayoutParams.WRAP_CONTENT,
                 android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
-        plp.topMargin = dp(14);
-        root.addView(panel, plp);
+        hlp.topMargin = dp(16);
+        root.addView(heading, hlp);
         return root;
     }
 
