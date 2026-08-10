@@ -170,8 +170,6 @@ void* run_squeak_thread(void* arg) {
 
     LOG("Llamando a g_squeak_main() con plugins: %s", plugins_path);
 
-
-    
     int result = g_squeak_main(argc, argv);
     
     // NOTA: Si llega aquí, la VM terminó "limpiamente" (o después de un fallo capturado)

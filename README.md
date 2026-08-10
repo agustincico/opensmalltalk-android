@@ -73,6 +73,8 @@ included), NDK 22, compileSdk 29. A clone builds the same APK as the official re
 - [docs/BUILDING-VM.md](docs/BUILDING-VM.md) — provenance of the prebuilt native VM and
   how to rebuild it from opensmalltalk-vm sources.
 - [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — bundled binaries and licenses.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — open bugs, subtleties, UX backlog, and the
+  Google Play path (cost + what modernization it needs).
 - `CLAUDE.md` — working notes: root causes, gotchas, backlog.
 
 ## License & credits

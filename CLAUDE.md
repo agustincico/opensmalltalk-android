@@ -1,5 +1,9 @@
 # CLAUDE.md — dev loop & project notes
 
+> **Planning a next step?** The consolidated backlog (open bugs, subtleties, UX,
+> Google Play path) lives in [`docs/ROADMAP.md`](docs/ROADMAP.md). This file is the
+> deep working notes.
+
 Guidance for working in **opensmalltalk-android**: run any OpenSmalltalk/Cuis
 image (and the *Dialogo* app) on Android as a native APK — no Termux. Interpreted
 **Stack VM** loaded via JNI (`app/src/main/cpp/squeak_jni.c`) + an embedded X11
