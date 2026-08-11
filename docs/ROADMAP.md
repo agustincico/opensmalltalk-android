@@ -124,6 +124,19 @@ libs, or ship those `.so`s, to actually load it.
 
 ## UX / polish backlog
 
+- **Auto-show the soft keyboard when a text field is focused in the image.** Today the
+  user taps the ⌨ button after clicking into a text morph. **Not easy:** Morphic manages
+  text focus *internally* and draws its own caret — the whole world is one X top-level
+  window, so there's **no X-level "text field focused" event** for the server to react to
+  (no XIM, no per-field input focus). Showing the keyboard on every tap would cover half
+  the screen. Real options: (a) **image→app signal** — patch the Cuis editor's
+  focus/unfocus (e.g. `Editor`/`PluggableTextModel` gaining keyboard focus) to set/clear
+  a custom X property (or send a ClientMessage to the clipboard server window), which the
+  Java X server watches → show/hide the IME. Doable for Cuis via the existing
+  `android-setup.st` (`-s`) hook; **hard for Squeak** (same `-s`/`--filein` delivery
+  problem as the Squeak file-in bug). (b) A gesture heuristic (double-tap-to-type) — less
+  precise but image-agnostic. Prefer (a) for Cuis; wire it to the same server-property
+  mechanism the shared clipboard already uses.
 - **Persist UI preferences** (zoom, smooth zoom, trackpad, precise pointer, mouse
   pointer, shared clipboard, long-press, orientation) via SharedPreferences — they reset
   every restart.
