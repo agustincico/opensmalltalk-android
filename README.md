@@ -61,12 +61,13 @@ edges remain fiddly with a finger (use Precise pointer / Trackpad mode).
 git clone https://github.com/agustincico/opensmalltalk-android
 cd opensmalltalk-android
 echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties   # adjust to your SDK
-JAVA_HOME=$(/usr/libexec/java_home -v 11) ./gradlew assembleDebug
+JAVA_HOME=/path/to/jdk-17 ./gradlew assembleDebug
 ```
 
 The repo is self-contained (launcher, X server library, prebuilt native VM — no
-submodules). The toolchain is pinned: **JDK 11**, AGP 4.2.2, Gradle 7.4.2 (wrapper
-included), NDK 22, compileSdk 29. A clone builds the same APK as the official release.
+submodules). Toolchain: **JDK 17**, AGP 8.7.3, Gradle 8.9 (wrapper included), NDK 26,
+compileSdk/targetSdk 35, arm64-v8a only. A clone builds the same APK as the official
+release; `./gradlew bundleRelease` produces the Play Store `.aab`.
 
 - [docs/DEV-LOOP.md](docs/DEV-LOOP.md) — the emulator dev loop (build → deploy →
   observe → drive input), including Smalltalk text-tests wired into logcat.

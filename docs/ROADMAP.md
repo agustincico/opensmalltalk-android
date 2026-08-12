@@ -4,7 +4,7 @@ Durable backlog for **opensmalltalk-android** — what's shipped, what's broken,
 subtleties worth knowing, and the path to a Play Store release. Working notes with
 root-causes live in [`CLAUDE.md`](../CLAUDE.md); this file is the high-level plan.
 
-Last updated: 2026-08-10, release **v1.41**.
+Last updated: 2026-08-12, release **v1.42** (Play-ready: targetSdk 35 + 16 KB pages).
 
 ---
 
@@ -15,8 +15,9 @@ Last updated: 2026-08-10, release **v1.41**.
   (attribution + JNI symbol stability). Label on device: **OpenSmalltalk**.
 - **Branches:** work on **`dev-loop`**; `main` is fast-forwarded on each release.
   Both currently point at the same commit.
-- **Releases:** signed APKs on GitHub Releases (v1.31 … v1.41), all signed with the
-  **same key** so they update in place (Obtainium-friendly). Not on any app store yet.
+- **Releases:** signed APKs on GitHub Releases (v1.31 … v1.42), all signed with the
+  **same key** so they update in place (Obtainium-friendly). Not on any app store yet —
+  but the `.aab` is now Play-ready (`./gradlew bundleRelease`).
 - **Signing key (CRITICAL):** `app/keystore.jks` + `app/keystore.properties` — both
   gitignored, present **only on the maintainer's Mac**. Back them up. Losing them means
   no in-place updates ever again (users must uninstall + reinstall). The *old*
@@ -104,9 +105,15 @@ libs, or ship those `.so`s, to actually load it.
   script chain) is delivered via `-s` and only runs on Cuis 6+.
 - **Chunk-format files must be ASCII and `!`-safe.** A non-ASCII char (em-dash) →
   "Unmatched comment quote"; a `!` inside a string chunk terminates the chunk early.
-- **Two JDKs, pinned toolchain:** JDK 11 for Gradle (AGP 4.2.2 breaks on newer), JDK 17+
-  only for the Android cmdline-tools. NDK 22, CMake 3.22.1, compileSdk 29, arm64-v8a
-  only (the only ABI with a real `libsqueak.so`).
+- **Two JDKs:** **JDK 17** for Gradle (AGP 8 rejects 11; Gradle 8.9 rejects 25 — and
+  macOS `java_home -v 17` returns "17 **or newer**", so `env.sh` version-checks), JDK 17+
+  for the Android cmdline-tools. NDK 26.2, CMake 3.22.1, compileSdk/targetSdk 35,
+  arm64-v8a only (the only ABI with a real `libsqueak.so`).
+- **Checking 16 KB alignment:** read `p_align` of the PT_LOAD segments of every `.so`
+  (must be ≥ 0x4000). Do it on the tree, on the release APK **and** on the AAB. Current
+  Termux packages are already 16 KB-aligned, so a misaligned prebuilt can usually be
+  fixed by swapping in a fresh `.deb` from `packages.termux.dev` (check SONAME + NEEDED
+  match first) instead of rebuilding from source.
 - **Emulator must be `google_apis` arm64** (not `google_play`) so `adb root` works for
   `push-image.sh`. It sometimes comes up with no default route → in-app downloads fail
   instantly (`adb shell ip route`; add `default via 10.0.2.2`).
@@ -174,40 +181,53 @@ libs, or ship those `.so`s, to actually load it.
 
 ---
 
-## Google Play (production) — cost & difficulty
+## Google Play — technical work DONE (2026-08-12), account work remains
 
-**Administratively cheap; the technical modernization is the real work.**
+**The two blockers this roadmap called "weeks of work" are done**, and the VM did NOT
+need rebuilding. `./gradlew bundleRelease` now produces a Play-ready signed `.aab`.
 
-**Direct cost:** **US$25 one-time** developer account (no annual fee). A *new personal*
-account must also run a **closed test: 12 testers for 14 continuous days** before
-production is unlocked → ~3–4 weeks of calendar time minimum.
+### ✅ 16 KB page size — done, without recompiling the VM
+The old estimate assumed all ~100 prebuilt Termux `.so` were 4 KB-aligned. Measured
+reality: **98 of 102 were already 16 KB (or 64 KB) aligned** — Termux has been building
+that way — **including `libsqueak.so` (the VM itself)**. Only 4 were 4 KB:
+`libXcursor.so` and the three `libpulse*`. They were **replaced with current Termux
+builds** (pulseaudio 17.0-4, libxcursor 1.2.3-1 — same SONAMEs, no new deps, so no ABI
+risk) rather than deleted, keeping behaviour identical. The one library we compile
+ourselves (`libsqueak_jni.so`) gets `-Wl,-z,max-page-size=16384` in
+`app/src/main/cpp/CMakeLists.txt` (NDK 26 needs it explicitly; r27+ defaults to it).
 
-**The two technical blockers (this is the actual effort):**
-1. **Target API 35.** Play requires new apps to target Android 15 (API 35); we're on
-   targetSdk 29 with AGP 4.2.2 / Gradle 7.4. Needs a toolchain bump (AGP 8.x, JDK 17,
-   compileSdk 35). The Java X server + JNI should compile with modernization, not a
-   rewrite — **days**, verified via the dev loop.
-2. **16 KB page size.** Apps targeting API 35+ must support 16 KB memory pages, and **all
-   ~100 prebuilt Termux `.so` are 4 KB-aligned** → the whole native stack (VM + plugins +
-   support libs) must be **rebuilt with `-z max-page-size=16384`**. This is the same work
-   as the reproducibility "rebuild from source" item, so not wasted — but **weeks**.
+Verification: 0 misaligned ELF64 in the tree, in the release APK **and in the AAB**, and
+the app was run end-to-end on an **Android 15 emulator with `getconf PAGE_SIZE` = 16384**
+(`system-images;android-35;google_apis_playstore_ps16k;arm64-v8a`, AVD `ost-16k`) —
+Cuis 7.7 booted and rendered with 0 dlopen errors, in both debug and R8 release builds.
 
-**Not blockers:**
-- *Downloading images at runtime* — Play forbids downloading executable code, but has an
-  explicit **exception for interpreted/VM code** (Pydroid, emulators). `.image` files are
-  interpreted bytecode; no `.so` is downloaded. Defensible.
-- *Data Safety / privacy* — the app collects nothing: trivial form + a privacy-policy URL
-  (a repo page suffices).
-- *Signing* — Play App Signing is mandatory (Google holds the key); you provide an
-  **upload key** — the current `keystore.properties` setup already fits.
-- *LGPL* — documented in THIRD-PARTY-NOTICES; complete the source-offer (solved with the
-  rebuild).
+### ✅ targetSdk 35 — done
+AGP 4.2.2 → **8.7.3**, Gradle 7.4.2 → **8.9**, JDK 11 → **17**, compileSdk/targetSdk 29 →
+**35**, NDK 22 → **26.2**. Plus the AGP 8 migration (namespace, no `package=`, explicit
+`android:exported`, `packaging {}`, `mavenCentral()`) and **arm64-v8a only** — the
+armeabi-v7a/x86_64 variants could never run the VM, and shipping them would let Play
+offer the app to devices where it cannot work. Release APK dropped 17.8 → 15.6 MB.
 
-**Intermediate path (today, free):** the signed GitHub Releases + Obtainium already give
-in-place updates with zero Play friction. Play is a separate, deferred project
-(toolchain modernization + 16 KB native rebuild).
+### What is left (account/store work, not code)
+1. **Play Console account — US$25 one-time.** A *new personal* account must also run a
+   **closed test with 12 testers for 14 continuous days** before production unlocks
+   (~3–4 weeks of calendar time). An organisation account skips that but needs a D-U-N-S.
+2. **Play App Signing**: upload the existing `app/keystore.jks` as the *upload key*
+   (Google then holds the app signing key). Keep backing that file up.
+3. **Store listing**: icon, screenshots (the emulator ones work), short/full description,
+   category, contact email.
+4. **Privacy policy URL** — the app collects nothing; a page in this repo (or on
+   opensmalltalk.com.ar) is enough. Needed for the Data safety form, which is otherwise
+   "no data collected".
+5. **Content rating** questionnaire + target-audience declaration.
+6. **Upload** `app/build/outputs/bundle/release/app-release.aab`.
 
----
+Policy note (checked): downloading `.image` files at runtime is fine — Play forbids
+downloading executable *code*, with an explicit exception for interpreted/VM content
+(same basis as Pydroid and the emulator apps). We download no `.so`.
+
+Still worth doing before/around publishing: complete the LGPL source offer in
+THIRD-PARTY-NOTICES (see Reproducibility), since publishing widens redistribution.
 
 ## How to resume (for a future session)
 

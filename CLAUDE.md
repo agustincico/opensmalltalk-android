@@ -52,7 +52,7 @@ history under `.loop/history/`, plus `emulator.log` / `scrcpy.log`.
 |---|---|
 | `env.sh` | Sourced by all others. Auto-detects SDK + the two JDKs; defines `PKG`, `ACTIVITY`, `AVD_NAME`, `FILES_DIR`, `$ADB`, helpers. Run it directly to print resolved config. Everything overridable via env vars. |
 | `emulator.sh` | Create the arm64 AVD if missing, boot it **headless**, wait `sys.boot_completed`, `adb root`. Idempotent (reuses a running device). `--window` to see the emulator, `--wipe` for a cold boot. |
-| `build.sh` | `./gradlew assembleDebug` with **JDK 11**. Gradle is incremental (~2s no-op). Needed only when Java / X11 / C sources or embedded assets change. |
+| `build.sh` | `./gradlew assembleDebug` with **JDK 17**. Gradle is incremental (~2s no-op). Needed only when Java / X11 / C sources or embedded assets change. |
 | `deploy.sh` | Install the APK and relaunch. `--fresh` uninstalls first (clears filesDir). (It used to also defeat an asset-extraction race; that's gone — the image is no longer auto-extracted, the startup chooser copies it on demand.) |
 | `observe.sh` | The two verification channels: `screencap` → `.loop/screen.png`, filtered `logcat` (Cuis/SQUEAK/SQUEAK_VM) → `.loop/logcat.txt`. Prints a health line (`vm_argv`, `image_open_fail`, `crash`) and surfaces any `DEVTEST` lines. `--stamp` keeps history, `--clear` resets the log buffer first. |
 | `input.sh` | Real touch/keyboard via adb (exercises the X-server → Cuis path): `tap X Y`, `swipe …`, `longpress …`, `text "…"`, `key ENTER|BACK|ESCAPE|…`, `back`, `home`. A tap on the empty Cuis desktop opens the World menu — a handy smoke test. |
@@ -90,18 +90,27 @@ present are unaffected: the argv stays the original 6 elements.
 
 ---
 
-## Toolchain (pinned — do NOT bump)
+## Toolchain (modernized 2026-08-12 for Google Play — see docs/ROADMAP.md)
 
-- **JDK 11** for the Gradle build (AGP 4.2.2 breaks on newer). `env.sh` finds it
-  via `/usr/libexec/java_home -v 11` (override with `JAVA11_HOME`).
+> The old pin (JDK 11 / AGP 4.2.2 / compileSdk 29) is GONE. Play requires
+> targetSdk 35, which requires AGP 8.x, which requires JDK 17.
+
+- **JDK 17** for the Gradle build. AGP 8 rejects 11, and Gradle 8.9 rejects 25 —
+  and macOS `java_home -v 17` means "17 **or newer**", so `env.sh` version-checks
+  each candidate and only accepts a real 17/21 (override with `JAVA17_HOME`).
+  This Mac has it unpacked at `~/.local/jdks/jdk-17*` (brew cask needs sudo).
 - **JDK 17+** for the Android cmdline-tools (`sdkmanager`/`avdmanager`, compiled
   class 61.0). `SKIP_JDK_VERSION_CHECK` is NOT enough — they need a real 17+ JVM.
   `env.sh` uses `java_home -v 17` (override `JAVA_CMDLINE_HOME`).
-- AGP 4.2.2 / Gradle 7.4.2 (wrapper included), NDK 22.0.7026061, CMake 3.22.1,
-  compileSdk android-29, build-tools 30.0.3.
-- **arm64-v8a only**: `libsqueak.so` and friends live in `jniLibs/arm64-v8a`. The
-  emulator/device MUST be arm64-v8a (the gradle `abiFilters` also lists x86_64 /
-  armeabi-v7a, but only the JNI wrapper is built for those — no `libsqueak.so`).
+- AGP 8.7.3 / Gradle 8.9 (wrapper included), NDK 26.2.11394342, CMake 3.22.1,
+  compileSdk + targetSdk 35, build-tools 35.0.0.
+- AGP 8 specifics applied: `namespace` in both modules (`au.com.darkside.x11server`
+  / `au.com.darkside.xserver` — NOT the applicationId, the R class lives there),
+  `package=` removed from both manifests, explicit `android:exported` on every
+  component, `packagingOptions` → `packaging`, `jcenter()` → `mavenCentral()`.
+- **arm64-v8a only** (`abiFilters`): `libsqueak.so` exists for arm64 alone, so the
+  old armeabi-v7a/x86_64 variants could never run an image — they only let Play
+  offer the app to devices where it cannot work. Dropping them also cut ~5 MB.
 - Emulator system image: `system-images;android-30;google_apis;arm64-v8a`
   (**google_apis**, not google_play, so `adb root` works for `push-image.sh`).
 - AVD used: `cuis-arm64` (pixel_5, `hw.keyboard=yes`).

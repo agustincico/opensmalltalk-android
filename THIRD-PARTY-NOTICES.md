@@ -83,6 +83,8 @@ from a package list. Reproduce with the recipe in
 | Vorbis (`libvorbis.so`) | **1.3.7** | `Xiph.Org libVorbis I 20200704` |
 | Opus (`libopus.so`) | **1.5.2** | `libopus 1.5.2` |
 | libsndfile (`libsndfile.so`) | **1.2.2** | `libsndfile-1.2.2` |
+| PulseAudio (`libpulse.so`, `libpulse-simple.so`, `libpulsecommon-17.0.so`) | **17.0-4** | replaced 2026-08-12 from Termux (16 KB-aligned build) |
+| libXcursor (`libXcursor.so`) | **1.2.3-1** | replaced 2026-08-12 from Termux (16 KB-aligned build) |
 | GLib (`libglib-2.0.so.0` etc.) | **2.86.1** | stripped — from the source device's Termux `pkg list-installed` (2026-08-09) |
 | FreeType (`libfreetype.so`) | **2.14.1** | stripped — same package-list capture |
 | fontconfig (`libfontconfig.so`) | **2.17.1-1** | stripped — same package-list capture |

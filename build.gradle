@@ -2,10 +2,12 @@
 buildscript {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
     }
     dependencies {
-        classpath 'com.android.tools.build:gradle:4.2.2'
+        // AGP 8.x is required to target API 35 (Play Store minimum) and to get
+        // 16 KB-page-aware packaging. It needs JDK 17 and Gradle 8.9 (wrapper).
+        classpath 'com.android.tools.build:gradle:8.7.3'
 
         // NOTE: Do not place your application dependencies here; they belong
         // in the individual module build.gradle files
@@ -15,10 +17,10 @@ buildscript {
 allprojects {
     repositories {
         google()
-        jcenter()
+        mavenCentral()
     }
 }
 
-task clean(type: Delete) {
-    delete rootProject.buildDir
+tasks.register('clean', Delete) {
+    delete rootProject.layout.buildDirectory
 }

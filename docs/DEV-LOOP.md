@@ -27,9 +27,9 @@ brew install scrcpy     # optional, for the live mirror
 - Use the **`google_apis`** image, not `google_play`: `adb root` is needed by `push-image.sh`.
 - `scripts/loop/emulator.sh` creates the AVD (`cuis-arm64`, pixel_5, `hw.keyboard=yes`) if missing.
 
-Two JDKs are used and auto-detected: **JDK 11** for Gradle, **JDK 17+** for the Android
+Two JDKs are used and auto-detected: **JDK 17** for Gradle, **JDK 17+** for the Android
 cmdline-tools (`sdkmanager`/`avdmanager` are compiled for class 61). Override with
-`JAVA11_HOME` / `JAVA_CMDLINE_HOME`. Run `./scripts/loop/env.sh` to print the resolved config.
+`JAVA17_HOME` / `JAVA_CMDLINE_HOME`. Run `./scripts/loop/env.sh` to print the resolved config.
 
 ## The scripts
 
@@ -37,7 +37,7 @@ cmdline-tools (`sdkmanager`/`avdmanager` are compiled for class 61). Override wi
 |---|---|
 | `env.sh` | Sourced by all others. Detects SDK + the two JDKs; defines `PKG`, `ACTIVITY`, `AVD_NAME`, `FILES_DIR`, `$ADB`, helpers. Everything overridable by env var. Defaults `ANDROID_SERIAL` to the emulator when a phone is also attached. |
 | `emulator.sh` | Create the AVD if missing, boot it **headless**, wait for `sys.boot_completed`, `adb root`. Idempotent. `--window`, `--wipe`. |
-| `build.sh` | `./gradlew assembleDebug` with JDK 11 (~2 s no-op). |
+| `build.sh` | `./gradlew assembleDebug` with JDK 17 (~2 s no-op). |
 | `deploy.sh` | Install the APK and relaunch. `--fresh` uninstalls first (clears `filesDir`). |
 | `observe.sh` | `screencap` → `.loop/screen.png`; filtered logcat (`Cuis`, `SQUEAK`, `SQUEAK_VM`) → `.loop/logcat.txt`; prints a health line (`vm_argv`, `image_open_fail`, `crash`) and any `DEVTEST` lines. `--stamp`, `--clear`. |
 | `input.sh` | Real touch/keys via adb: `tap X Y`, `swipe`, `longpress`, `text "…"`, `key ENTER\|BACK\|…`, `back`, `home`. |

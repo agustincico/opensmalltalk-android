@@ -12,7 +12,7 @@
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 
-[ -d "$JAVA11_HOME" ] || { loop_err "JDK 11 not found; set JAVA11_HOME"; exit 1; }
+[ -d "$JAVA17_HOME" ] || { loop_err "JDK 17 not found; set JAVA17_HOME"; exit 1; }
 
 # local.properties (sdk.dir) — create if missing
 if [ ! -f "$REPO_ROOT/local.properties" ]; then
@@ -29,7 +29,7 @@ esac
 
 loop_log "gradle ${TASKS[*]} (JDK 11)"
 cd "$REPO_ROOT"
-JAVA_HOME="$JAVA11_HOME" ./gradlew "${TASKS[@]}"
+JAVA_HOME="$JAVA17_HOME" ./gradlew "${TASKS[@]}"
 
 APK="$REPO_ROOT/app/build/outputs/apk/debug/app-debug.apk"
 [ -f "$APK" ] && loop_log "APK: $APK ($(du -h "$APK" | cut -f1))"

@@ -1,28 +1,29 @@
 apply plugin: 'com.android.application'
 
 android {
-    compileSdkVersion 29
-    ndkVersion "22.0.7026061"
-    
+    // The R class / resources package. Kept as the fork's original Java package
+    // (the sources live there); the PUBLIC identity is applicationId below.
+    namespace 'au.com.darkside.x11server'
+
+    compileSdk 35
+    ndkVersion "26.2.11394342"
+
     defaultConfig {
         applicationId "ar.com.opensmalltalk"
         minSdkVersion 22
-        targetSdkVersion 29
-        versionCode 41
-        versionName "1.41"
-        
+        // Google Play requires new apps/updates to target API 35 (Android 15).
+        targetSdk 35
+        versionCode 42
+        versionName "1.42"
+
         ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            // arm64 only: libsqueak.so (the VM) exists for arm64-v8a alone, so an
+            // armeabi-v7a/x86_64 install could never run an image — shipping them
+            // only lets Play offer the app to devices where it cannot work.
+            abiFilters 'arm64-v8a'
         }
-        
-        // ¡ESTE BLOQUE EXTERNAL NATIVE BUILD HA SIDO ELIMINADO!
-        // externalNativeBuild {
-        //     cmake {
-        //         cppFlags "-std=c11"
-        //     }
-        // }
     }
-    
+
     // Release signing is configured OUTSIDE the repo. Copy keystore.properties.example
     // to app/keystore.properties (gitignored) and fill in your own keystore. Without
     // it `assembleRelease` still builds — just unsigned — so a fresh clone works.
@@ -49,27 +50,29 @@ android {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            packagingOptions {
-                doNotStrip "**/*/*.so"
-            }
             signingConfig keystorePropsFile.exists() ? signingConfigs.release : null
         }
     }
-    
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
-    
+
     externalNativeBuild {
         cmake {
             path file('src/main/cpp/CMakeLists.txt')
-            version "3.22.1"  // <--- ESTA LÍNEA ES LA SOLUCIÓN
+            version "3.22.1"
         }
     }
-    
-    packagingOptions {
-        pickFirst 'lib/*/libc++_shared.so'
+
+    packaging {
+        jniLibs {
+            pickFirsts += ['lib/*/libc++_shared.so']
+            // The prebuilt VM/plugins must not be stripped: they are shipped as
+            // built (and stripping them here would also rewrite their ELF layout).
+            keepDebugSymbols += ['**/*.so']
+        }
     }
 }
 

@@ -10,10 +10,12 @@
 # machines / CI. Run it directly to print the resolved config:
 #     ./scripts/loop/env.sh
 #
-# Toolchain (pinned by the repo — do NOT bump):
-#   - JDK 11 for the Gradle build (AGP 4.2.2 breaks on newer)
+# Toolchain (2026-08 Play Store modernization — see docs/ROADMAP.md):
+#   - JDK 17 for the Gradle build (AGP 8.x requires 17; it rejects 11, and
+#     Gradle 8.9 rejects 25 — the detection below version-checks candidates)
 #   - JDK 17+ for the Android cmdline-tools (sdkmanager/avdmanager; class 61.0)
-#   - NDK 22.0.7026061, CMake 3.22.1, compileSdk 29, build-tools 30.0.3
+#   - AGP 8.7.3 / Gradle 8.9, NDK 26.2.11394342, CMake 3.22.1,
+#     compileSdk 35 / targetSdk 35 (Play minimum), build-tools 35.0.0
 #   - Emulator: arm64-v8a system image (libsqueak.so is arm64-only)
 
 # --- repo root -------------------------------------------------------------
@@ -56,15 +58,40 @@ export ANDROID_SDK_ROOT
 export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
 
 # --- JDKs ------------------------------------------------------------------
-# JDK 11 for Gradle
-if [ -z "${JAVA11_HOME:-}" ]; then
-  if [ -x /usr/libexec/java_home ]; then JAVA11_HOME="$(/usr/libexec/java_home -v 11 2>/dev/null || true)"; fi
-  [ -z "${JAVA11_HOME:-}" ] && JAVA11_HOME="$(_first_existing_dir \
-      /Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home \
-      /usr/lib/jvm/java-11-openjdk-amd64 \
-      /usr/lib/jvm/java-11-openjdk || true)"
+# JDK 17 for Gradle. AGP 8.x (needed to target API 35 for Google Play) requires
+# 17 and refuses 11; Gradle 8.9 does not support JDK 25 either, so we look for a
+# real 17 (a 21 also works). Override with JAVA17_HOME.
+# NOTE: java_home -v 17 only finds system-installed JDKs; a tarball unpacked in
+# ~/.local/jdks is picked up too (that's how this Mac has it).
+# Careful: on macOS `java_home -v 17` means "17 OR NEWER" and happily returns a
+# JDK 25, which Gradle 8.9 refuses. So every candidate is version-checked here.
+_jdk_major() {
+  [ -x "$1/bin/java" ] || return 1
+  "$1/bin/java" -version 2>&1 | head -1 | sed -E 's/.*"([0-9]+).*/\1/'
+}
+_pick_gradle_jdk() {
+  local c major
+  for c in "$@"; do
+    [ -n "$c" ] && [ -d "$c" ] || continue
+    major="$(_jdk_major "$c" 2>/dev/null || true)"
+    case "$major" in 17|21) echo "$c"; return 0;; esac
+  done
+  return 1
+}
+if [ -z "${JAVA17_HOME:-}" ]; then
+  JAVA17_HOME="$(_pick_gradle_jdk \
+      "$HOME"/.local/jdks/jdk-17*/Contents/Home \
+      "$HOME"/.local/jdks/jdk-21*/Contents/Home \
+      /Library/Java/JavaVirtualMachines/temurin-17.jdk/Contents/Home \
+      /Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home \
+      "$(/usr/libexec/java_home -v 17 2>/dev/null || true)" \
+      "$(/usr/libexec/java_home -v 21 2>/dev/null || true)" \
+      /usr/lib/jvm/java-17-openjdk-amd64 \
+      /usr/lib/jvm/java-17-openjdk || true)"
 fi
-export JAVA11_HOME
+export JAVA17_HOME
+# Back-compat: older scripts/docs referred to JAVA11_HOME as "the Gradle JDK".
+export JAVA11_HOME="${JAVA11_HOME:-$JAVA17_HOME}"
 
 # JDK 17+ for cmdline-tools (sdkmanager / avdmanager)
 if [ -z "${JAVA_CMDLINE_HOME:-}" ]; then
@@ -123,7 +150,7 @@ if [ "${BASH_SOURCE[0]:-}" = "${0:-}" ]; then
   cat <<EOF
 REPO_ROOT         = $REPO_ROOT
 ANDROID_SDK_ROOT  = $ANDROID_SDK_ROOT
-JAVA11_HOME       = $JAVA11_HOME
+JAVA17_HOME       = $JAVA17_HOME
 JAVA_CMDLINE_HOME = $JAVA_CMDLINE_HOME
 ADB               = $ADB
 EMULATOR          = $EMULATOR
@@ -135,6 +162,6 @@ ARTIFACTS_DIR     = $ARTIFACTS_DIR
 EOF
   # sanity
   [ -d "$ANDROID_SDK_ROOT" ] || loop_err "ANDROID_SDK_ROOT not found: $ANDROID_SDK_ROOT"
-  [ -d "$JAVA11_HOME" ]      || loop_err "JDK 11 not found (set JAVA11_HOME)"
+  [ -d "$JAVA17_HOME" ]      || loop_err "JDK 17 not found (set JAVA17_HOME)"
   [ -d "$JAVA_CMDLINE_HOME" ]|| loop_err "JDK 17+ not found (set JAVA_CMDLINE_HOME)"
 fi
