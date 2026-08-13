@@ -209,9 +209,11 @@ armeabi-v7a/x86_64 variants could never run the VM, and shipping them would let 
 offer the app to devices where it cannot work. Release APK dropped 17.8 → 15.6 MB.
 
 ### What is left (account/store work, not code)
-1. **Play Console account — US$25 one-time.** A *new personal* account must also run a
-   **closed test with 12 testers for 14 continuous days** before production unlocks
-   (~3–4 weeks of calendar time). An organisation account skips that but needs a D-U-N-S.
+1. **Play Console account — US$25 one-time, and it covers UNLIMITED apps** (the fee is
+   per developer account, paid once — not per app; the same account can later publish
+   Dialogo or anything else). A *new personal* account must also run a **closed test
+   with 12 testers for 14 continuous days** before production unlocks (~3–4 weeks of
+   calendar time). An organisation account skips that but needs a D-U-N-S number.
 2. **Play App Signing**: upload the existing `app/keystore.jks` as the *upload key*
    (Google then holds the app signing key). Keep backing that file up.
 3. **Store listing**: icon, screenshots (the emulator ones work), short/full description,

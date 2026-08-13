@@ -76,6 +76,8 @@ release; `./gradlew bundleRelease` produces the Play Store `.aab`.
 - [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — bundled binaries and licenses.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — open bugs, subtleties, UX backlog, and the
   Google Play path (cost + what modernization it needs).
+- [docs/UPSTREAMING.md](docs/UPSTREAMING.md) — plan for contributing the Android build
+  fixes back to the upstream OpenSmalltalk VM.
 - `CLAUDE.md` — working notes: root causes, gotchas, backlog.
 
 ## License & credits
