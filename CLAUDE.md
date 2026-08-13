@@ -210,14 +210,24 @@ From the README "Known limitations" plus what the loop surfaced:
    header/format (identical), our post-startup fullscreen resize (disabled →
    still blank), 24-bit alpha. So *"Cuis 7.7 (download)"* now fetches
    `?ref=%23BaseForCuis7.8` (Cuis7.7-7976 + Cuis7.6.sources).
-   **CLOSED OUT 2026-08-13 — it is the image, definitively.** Two experiments on the
-   freshly cross-compiled VM (a completely different binary, built from pinned upstream
-   sources): 8090 fails *identically* — blank world, `-s` script never runs, 92.5% CPU
-   exception storm — while **CuisUniversity-8134** (past 8093/8094) renders perfectly.
-   A different VM changes nothing and a fixed image works, so our VM and X server are
-   exonerated. The only thing left is that **Cuis has not published a rolling image
-   newer than 8090** (`master/CuisImage` checked 2026-08-13). Watch it; when one lands,
-   boot-test and unpin. Diagnostic tooling
+   **2026-08-13 — VM exonerated, but the update attribution here was WRONG.** Measured
+   on the freshly cross-compiled VM (a different binary from pinned upstream sources):
+   8090 fails *identically* — blank world, `-s` never runs, 92.5% CPU exception storm —
+   while **CuisUniversity-8134** renders perfectly, and its `.changes` chain proves it is
+   `Cuis7.9-8090.image` + updates 8091–8134, the same file updated. So the VM/X server
+   are exonerated and the 8090 file is not structurally incompatible.
+   **But "8093/8094 are the fix" is wrong:** 8093 *introduced* a `processStartUpList:`
+   ordering bug and 8094 reverted it 33 min later; 8090 already had the 8094 order.
+   Better candidates: **update 8043** (`EarlierReadPreferencesAndCommandLineOptions`,
+   2026-07-02) moved `processCommandLineArguments: true` before `readCommandLineArguments`,
+   making the broken window **8043–8092** — which fits every data point; and **8119/8120**
+   (nil `strokeWidth` DNU inside `VectorEngineDrawer`'s draw loop), which matches the
+   exception storm better than any ordering change. **Key mechanism worth remembering:
+   `-ud` is an INITIAL command-line option, `-s` is a FINAL one** — so in that window our
+   `-ud <filesDir>` is silently dropped, and "`-s` never runs" is a *consequence* of the
+   dead UI, not an independent clue. Untested next steps: upstream's built-in startup
+   tracer (its output lands in logcat), and a bisect over 8043–8092 using rolling images
+   fetched by commit SHA. Diagnostic tooling
    left in the tree: XPutImage logs (Drawable, budget-limited) and — trick worth
    remembering — `kill -SEGV <interpreter TID>` makes the VM print the Smalltalk
    stack to logcat (find the TID via `debuggerd -b`; plain SIGUSR1 is eaten by

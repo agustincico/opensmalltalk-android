@@ -87,21 +87,56 @@ on this VM (diagnosed: 2026 startup-sequence rework; upstream fixed it in update
 **8093/8094**, which landed *after* the current rolling image). The in-app Cuis download
 is pinned to **7.7-7976** (`#BaseForCuis7.8`).
 
-**Retested 2026-08-13 against the freshly cross-compiled VM — the pin stays, and the
-diagnosis is now settled from both directions:**
+**Measured 2026-08-13 against the freshly cross-compiled VM:**
 
 - `Cuis7.9-8090` (still what `master/CuisImage` ships today) **fails identically** on a
   VM built independently from pinned upstream sources: blank world, the `-s` startup
-  script never runs at all, and the process burns **92.5% CPU** — the same
-  exception-storm signature recorded in July. A different VM binary changes nothing,
-  which rules out our VM as the cause about as firmly as it can be ruled out.
-- `CuisUniversity-8134` — update 8134, well past 8093/8094 — downloads and **renders
-  perfectly** on that same VM, so the upstream fix does work on this platform.
+  script never runs, and the process burns **92.5% CPU** — the same exception-storm
+  signature recorded in July. A different VM binary changes nothing, which rules out
+  our VM binary as the cause.
+- `CuisUniversity-8134` downloads and **renders perfectly** on that same VM. Its
+  `.changes` provenance chain proves it is **literally `Cuis7.9-8090.image` + core
+  updates 8091–8134 + packages** — the same image file, updated, not a fork. So the
+  8090 image is not structurally incompatible with this VM; something in the
+  8091–8134 delta fixes or masks the failure.
 
-So the blank world is upstream's startup-sequence rework, not this port. **The blocker
-is simply that Cuis has not refreshed its published rolling image since 8090.**
-**Action:** watch `master/CuisImage` for an image > 8090; when one appears, boot-test it
-and unpin `downloadCuis` from `#BaseForCuis7.8`. Nothing else is needed.
+**Correction (same day): the "8093/8094 are the fix" premise this file used to carry is
+wrong.** A diff of those two updates shows 8093 *introduced* a `processStartUpList:`
+ordering bug and 8094 undid it 33 minutes later; at 8090 the order was **already** what
+8094 restored. No released image ever shipped 8093 without 8094. So "CuisUniversity has
+8093/8094, therefore the startup bug is fixed" is unsound reasoning even though the
+observation it rests on is real.
+
+**Two better-supported candidates, neither yet tested on the device:**
+
+1. **Update 8043** (`EarlierReadPreferencesAndCommandLineOptions`, 2026-07-02) moved
+   `processCommandLineArguments: true` to *before* `readCommandLineArguments`. That makes
+   the broken window exactly **8043–8092** — which fits every data point we have (our pin
+   7976 < 8043 works; 8090 is inside and fails; 8134 ≥ 8094 works). It also explains the
+   symptom mechanically: **`-ud` is an INITIAL command-line option and `-s` is a FINAL
+   one** (`SystemDictionary>>processInitialCommandLineOption:` vs
+   `processFinalCommandLineOption:`). In that window our `-ud <filesDir>` is silently
+   ignored, so Cuis resolves its user base from a fallback path — and "`-s` never runs"
+   is not an independent symptom at all, because final options only run once the UI
+   process exists.
+2. **Updates 8119/8120** fix a nil `strokeWidth` DNU in `VectorEngineDrawer`'s
+   world-draw path (8120 sets it in `pvtSetForm:`, which runs at Display setup and on
+   screen resize). A DNU raised repeatedly *inside the draw loop* matches both halves of
+   the symptom — never-drawn world plus a `primitiveFindHandlerContext` storm at ~95%
+   CPU — better than any ordering change. Caveat: `pvtSetForm:` is touched only once in
+   the whole 7978→8134 stream, so 7976 left `strokeWidth` uninitialised too; the trigger
+   must be something else that changed.
+
+**Action.** The pin stays — but the honest reason is that *no published plain Cuis image
+sits outside the 8043–8092 window*, not that we know which update matters. Cheapest ways
+to settle it, in order: (a) upstream ships a built-in startup tracer whose output would
+land straight in logcat; (b) historical rolling images are fetchable by commit SHA, so a
+bisect across 8043–8092 is cheap; (c) test whether `-ud` is being honoured at all on the
+pinned image. Also worth knowing: `Cuis-Smalltalk/Cuis7-8` (a *stable* repo) carries
+`Cuis7.8.image` at update **7977**, one past our pin — switching would need a regex
+change, since stable images carry no build-number suffix. And the next base tag will be
+**`#BaseForCuis8.0`**, not 7.9: tags are even minors pointing at the last odd-minor dev
+build, so there will never be a "7.9 stable".
 
 ### 4. `XDisplayControlPlugin.so` fails to `dlopen` — FIXED 2026-08-12
 Was over-linked against libs not shipped (libSM/libICE/libandroid-execinfo). The NDK
