@@ -71,7 +71,11 @@ fi
 # chooser on launch (it only auto-boots when .custom_image exists) and the image
 # we just pushed is ignored. Also drop a stale .boot_pending so the crash-loop
 # guard doesn't bounce this fresh image straight back to the chooser.
-"$ADB" shell "rm -f '$FILES_DIR/.boot_pending'; : > '$FILES_DIR/.custom_image' && chown $uidname:$uidname '$FILES_DIR/.custom_image' && chmod 600 '$FILES_DIR/.custom_image' && restorecon '$FILES_DIR/.custom_image' 2>/dev/null" >/dev/null 2>&1
+#
+# The marker must NAME the image. It used to be written empty, which the app reads
+# as the legacy "Cuis.image" — so `--as Something.image` pushed the file correctly
+# and then booted to "chosen image Cuis.image is gone — back to the chooser".
+"$ADB" shell "rm -f '$FILES_DIR/.boot_pending'; printf '%s' '$DEST_IMG' > '$FILES_DIR/.custom_image' && chown $uidname:$uidname '$FILES_DIR/.custom_image' && chmod 600 '$FILES_DIR/.custom_image' && restorecon '$FILES_DIR/.custom_image' 2>/dev/null" >/dev/null 2>&1
 
 # verify sizes landed
 loop_log "on-device: $("$ADB" shell run-as "$PKG" ls -l "files/$DEST_IMG" 2>/dev/null | tr -d '\r' || "$ADB" shell ls -l "$FILES_DIR/$DEST_IMG" | tr -d '\r')"

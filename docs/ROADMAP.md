@@ -87,14 +87,21 @@ on this VM (diagnosed: 2026 startup-sequence rework; upstream fixed it in update
 **8093/8094**, which landed *after* the current rolling image). The in-app Cuis download
 is pinned to **7.7-7976** (`#BaseForCuis7.8`).
 
-**New evidence (2026-08-13):** `CuisUniversity-8134` — update 8134, i.e. well past
-8094 — downloads and **renders perfectly** on the rebuilt VM. That is the first
-confirmation that the fix works on this platform, and it makes the blank-world
-diagnosis (upstream's startup rework, not our VM or X server) essentially settled.
-**Action:** retest a *vanilla* Cuis rolling image ≥8094 and, if it renders, unpin
-`downloadCuis` from `#BaseForCuis7.8`. Until that specific test is done the pin
-stays — Cuis University is a different image lineage, so it is strong evidence,
-not proof.
+**Retested 2026-08-13 against the freshly cross-compiled VM — the pin stays, and the
+diagnosis is now settled from both directions:**
+
+- `Cuis7.9-8090` (still what `master/CuisImage` ships today) **fails identically** on a
+  VM built independently from pinned upstream sources: blank world, the `-s` startup
+  script never runs at all, and the process burns **92.5% CPU** — the same
+  exception-storm signature recorded in July. A different VM binary changes nothing,
+  which rules out our VM as the cause about as firmly as it can be ruled out.
+- `CuisUniversity-8134` — update 8134, well past 8093/8094 — downloads and **renders
+  perfectly** on that same VM, so the upstream fix does work on this platform.
+
+So the blank world is upstream's startup-sequence rework, not this port. **The blocker
+is simply that Cuis has not refreshed its published rolling image since 8090.**
+**Action:** watch `master/CuisImage` for an image > 8090; when one appears, boot-test it
+and unpin `downloadCuis` from `#BaseForCuis7.8`. Nothing else is needed.
 
 ### 4. `XDisplayControlPlugin.so` fails to `dlopen` — FIXED 2026-08-12
 Was over-linked against libs not shipped (libSM/libICE/libandroid-execinfo). The NDK

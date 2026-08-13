@@ -209,8 +209,15 @@ From the README "Known limitations" plus what the loop surfaced:
    mid-rework image. NOT the culprit (all tested): missing .sources, image
    header/format (identical), our post-startup fullscreen resize (disabled →
    still blank), 24-bit alpha. So *"Cuis 7.7 (download)"* now fetches
-   `?ref=%23BaseForCuis7.8` (Cuis7.7-7976 + Cuis7.6.sources). **Retest master
-   when Cuis publishes a rolling image containing ≥8094.** Diagnostic tooling
+   `?ref=%23BaseForCuis7.8` (Cuis7.7-7976 + Cuis7.6.sources).
+   **CLOSED OUT 2026-08-13 — it is the image, definitively.** Two experiments on the
+   freshly cross-compiled VM (a completely different binary, built from pinned upstream
+   sources): 8090 fails *identically* — blank world, `-s` script never runs, 92.5% CPU
+   exception storm — while **CuisUniversity-8134** (past 8093/8094) renders perfectly.
+   A different VM changes nothing and a fixed image works, so our VM and X server are
+   exonerated. The only thing left is that **Cuis has not published a rolling image
+   newer than 8090** (`master/CuisImage` checked 2026-08-13). Watch it; when one lands,
+   boot-test and unpin. Diagnostic tooling
    left in the tree: XPutImage logs (Drawable, budget-limited) and — trick worth
    remembering — `kill -SEGV <interpreter TID>` makes the VM print the Smalltalk
    stack to logcat (find the TID via `debuggerd -b`; plain SIGUSR1 is eaten by
