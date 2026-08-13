@@ -66,6 +66,25 @@ fi
 # 4) Root (persistent, so push-image won't restart adbd / blink scrcpy) ----
 loop_adb_root
 
+# 5) Make the network actually usable -------------------------------------
+# The emulator brings up BOTH an emulated cellular link (eth0) and "AndroidWifi"
+# (wlan0). Wi-Fi wins the default-network election (higher score) and Android
+# reports it CONNECTED *and* VALIDATED — but its IPv4 routing table comes up
+# EMPTY, so every connect() from an app dies with "Network is unreachable" and
+# the in-app image downloads silently fail. eth0's table is fine, so turning
+# Wi-Fi off makes Android fall back to a link that routes.
+# Symptom this prevents: "Load image → Cuis (download)" doing nothing.
+if [ "$("$ADB" shell 'ip route show table wlan0 2>/dev/null | wc -l' | tr -d '\r')" = "0" ]; then
+  loop_log "emulator Wi-Fi has an empty route table — disabling it so downloads work"
+  "$ADB" shell svc wifi disable >/dev/null 2>&1 || true
+  sleep 4
+fi
+if "$ADB" shell 'nc -w 5 files.squeak.org 80 </dev/null' >/dev/null 2>&1; then
+  loop_log "network ok (outbound TCP works)"
+else
+  loop_err "WARNING: no outbound network — the in-app image downloads will fail"
+fi
+
 abi="$("$ADB" shell getprop ro.product.cpu.abi | tr -d '\r')"
 sdk="$("$ADB" shell getprop ro.build.version.sdk | tr -d '\r')"
 loop_log "ready: $("$ADB" get-serialno) abi=$abi sdk=$sdk root=$([ "$("$ADB" shell id -u|tr -d '\r')" = 0 ] && echo yes || echo no)"

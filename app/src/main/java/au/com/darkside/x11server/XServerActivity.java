@@ -1230,8 +1230,11 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         if (!m.find()) throw new Exception("no windows64.zip in the latest Cuis University release");
         String url = m.group(1);
         File zip = new File(getCacheDir(), "download.zip");
-        downloadToFile(url, zip, pd, "Downloading Cuis University (~150 MB)");
-        setProgressMsg(pd, "Unzipping…");
+        downloadToFile(url, zip, pd, "Downloading Cuis University (~200 MB)");
+        // Unzipping this one takes ~50 s on a phone (a 45 MB image plus changes and
+        // sources come out of it), and it is indeterminate, so say so rather than
+        // leaving the user looking at a spinner that seems stuck.
+        setProgressMsg(pd, "Unzipping — this takes a minute…");
         String imageName = unzipBundle(zip);
         zip.delete();
         return imageName;

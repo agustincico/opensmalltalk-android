@@ -16,9 +16,10 @@
 set -euo pipefail
 source "$(dirname "$0")/env.sh"
 
-IMG=""; CHANGES=""; ST=""; RELAUNCH=1; DEST_IMG="$IMAGE_NAME"; DEST_ST="dev-tests.st"
+IMG=""; CHANGES=""; SOURCES=""; ST=""; RELAUNCH=1; DEST_IMG="$IMAGE_NAME"; DEST_ST="dev-tests.st"
 while [ $# -gt 0 ]; do case "$1" in
   --changes) CHANGES="$2"; shift ;;
+  --sources) SOURCES="$2"; shift ;;
   --st)      ST="$2"; shift ;;
   --as)      DEST_IMG="$2"; shift ;;
   --no-relaunch) RELAUNCH=0 ;;
@@ -26,7 +27,7 @@ while [ $# -gt 0 ]; do case "$1" in
   *) IMG="$1" ;;
 esac; shift; done
 
-[ -n "$IMG" ] || { loop_err "usage: push-image.sh IMAGE [--changes F] [--st F] [--no-relaunch]"; exit 2; }
+[ -n "$IMG" ] || { loop_err "usage: push-image.sh IMAGE [--changes F] [--sources F] [--st F] [--no-relaunch]"; exit 2; }
 [ -f "$IMG" ] || { loop_err "image not found: $IMG"; exit 1; }
 loop_device_online || { loop_err "no device online — run emulator.sh first"; exit 1; }
 
@@ -53,6 +54,18 @@ push_one() {  # src destname
 push_one "$IMG" "$DEST_IMG"
 [ -n "$CHANGES" ] && { [ -f "$CHANGES" ] || { loop_err "changes not found: $CHANGES"; exit 1; }; push_one "$CHANGES" "$CHANGES_NAME"; }
 [ -n "$ST" ]      && { [ -f "$ST" ]      || { loop_err ".st not found: $ST"; exit 1; };      push_one "$ST" "$DEST_ST"; }
+
+# A .sources file, if you have one. Without it the image boots fine but Cuis
+# opens a "cannot locate the sources file named …" warning on every launch and
+# you lose method source text. (The in-app downloads fetch it automatically;
+# only hand-pushed images miss it.) Keep the name the image expects, e.g.
+# Cuis7.6.sources for a Cuis 7.x image.
+if [ -n "$SOURCES" ]; then
+  [ -f "$SOURCES" ] || { loop_err "sources not found: $SOURCES"; exit 1; }
+  push_one "$SOURCES" "$(basename "$SOURCES")"
+elif ! "$ADB" shell "ls $FILES_DIR/*.sources" >/dev/null 2>&1; then
+  loop_log "note: no .sources on device — Cuis will warn 'cannot locate the sources file' (pass --sources F)"
+fi
 
 # Mark the image as user-chosen. Without this the app shows its "Load image"
 # chooser on launch (it only auto-boots when .custom_image exists) and the image

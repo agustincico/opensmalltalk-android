@@ -76,8 +76,18 @@ Requires a **Cuis 6.x+** image (Cuis 5.0 predates `-s`). Production images witho
 
 - `emulator.sh` roots adbd once at boot so `push-image.sh` doesn't restart adbd every time
   (which would blink scrcpy).
-- The emulator sometimes comes up with **no default route**, and in-app downloads then fail
-  instantly. Check `adb shell ip route`; fix with
-  `adb shell su 0 ip route add default via 10.0.2.2 dev wlan0`.
+- **The emulator's Wi-Fi has no IPv4 route, and it wins the default-network election** —
+  so every `connect()` from an app fails with *"Network is unreachable"* and the in-app
+  image downloads do nothing. `emulator.sh` now detects and fixes this at boot, and prints
+  `network ok (outbound TCP works)`.
+  The trap, if you ever debug it by hand: `adb shell ip route add default … dev wlan0` does
+  **not** work. Android routes per-network via `fwmark`, not through the main table, and
+  `ip route show table wlan0` is *empty* — so that command fails with `RTNETLINK answers:
+  Network is unreachable` and adding to the main table changes nothing. Meanwhile
+  `dumpsys connectivity` cheerfully reports the Wi-Fi network `CONNECTED` and `VALIDATED`.
+  The fix is to take Wi-Fi out of the running so Android falls back to the emulated
+  cellular link (`eth0`), whose table *does* have a default route: `adb shell svc wifi
+  disable`. Verify with a TCP test, not `ping` — ICMP fails under the emulator's user-mode
+  networking even when TCP works.
 - Scripts run under macOS **bash 3.2**, so array expansions use the
   `${arr[@]+"${arr[@]}"}` idiom.
