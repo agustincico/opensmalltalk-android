@@ -10,11 +10,15 @@ android {
 
     defaultConfig {
         applicationId "ar.com.opensmalltalk"
-        minSdkVersion 22
+        // The VM is cross-compiled against Bionic API 28: nl_langinfo arrived in
+        // 26 and glob()/globfree() in 28, and the plugins call both. This used to
+        // say 22 while every shipped .so declared 24, so the floor was fiction --
+        // now it matches the binaries. See docs/BUILDING-VM.md.
+        minSdkVersion 28
         // Google Play requires new apps/updates to target API 35 (Android 15).
         targetSdk 35
-        versionCode 42
-        versionName "1.42"
+        versionCode 43
+        versionName "1.43"
 
         ndk {
             // arm64 only: libsqueak.so (the VM) exists for arm64-v8a alone, so an

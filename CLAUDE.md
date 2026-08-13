@@ -152,11 +152,11 @@ From the README "Known limitations" plus what the loop surfaced:
    nothing resizes; no further resize until a rotation. Fix: `ScreenView` polls
    post-startup until a viewable top-level window exists, then applies the same
    resize a rotation does — once. Verified: world fills the screen from launch.
-2. **`XDisplayControlPlugin.so` fails to load** (`dlopen … (null)`). Cause found:
-   it's over-linked — `NEEDED` `libSM.so`, `libICE.so`, `libuuid.so`,
-   `libandroid-execinfo.so`, none shipped in `assets/plugins/`. No longer blocks
-   fullscreen (fixed above without it); to actually load it, rebuild the plugin
-   without the X session libs (SM/ICE) or ship those .so's. Low priority.
+2. **~~`XDisplayControlPlugin.so` fails to load~~ — fixed 2026-08-12 by the NDK rebuild.**
+   Cause was over-linking: `NEEDED` listed `libSM.so`, `libICE.so`,
+   `libandroid-execinfo.so`, none shipped in `assets/plugins/`. Rebuilding the plugin from
+   the pinned upstream tree (`scripts/build-vm-android.sh`) drops all three; its `NEEDED`
+   is now entirely libraries the APK ships.
 3. **Touch/menus hard to hit with a finger** — *improved:* a **Zoom** picker
    (ScreenView `_displayScale`) renders the X screen at `physical/scale` and scales
    it up (nearest-neighbour), so widgets are bigger and tappable; touch is mapped
@@ -316,14 +316,15 @@ passwords committed in `app/build.gradle`.
 
 Still open, roughly by value:
 
-1. **Native provenance** — plugins come from a *different* checkout
-   (`opensmalltalk-vm-cog-clean`, `squeak.cog.spur`) than the VM
-   (`opensmalltalk-vm`, `squeak.stack.spur`, tag r3732); the ~100 support libs were
-   harvested from a Termux install with no manifest; no pinned upstream commit and
-   5 of the 8 patches are applied by absolute line number. **Capture
-   `pkg list-installed`, both checkouts' `git log -1`, and `plugins.int/.ext` from
-   that phone while it still exists** — that single capture closes most of it.
-   See `docs/BUILDING-VM.md`.
+1. **~~Native provenance~~ — closed 2026-08-12.** The VM *and* all 20 plugin/display/sound
+   modules are now cross-compiled from **one** pinned upstream tree
+   (`opensmalltalk-vm` `Cog` @ `a4d3da0`, `squeak.stack.spur`) with the Android NDK, by
+   `scripts/build-vm-android.sh`, on a desktop — no phone, no Termux install, no
+   line-addressed `sed`. Verified: aarch64 PIE exporting `main`, `NEEDED` identical to the
+   old `libsqueak.so`, all 21 artifacts 16 KB-aligned, boots Cuis 7.7 with working touch.
+   Only the ~60 X11/cairo/pango **support libraries** are still Termux prebuilts — but the
+   build script now pulls its sysroot from Termux's package repo, so moving those over is a
+   small next step. See `docs/BUILDING-VM.md`.
 2. **Persist UI preferences** (zoom, smooth zoom, trackpad, precise pointer,
    pointer, clipboard, long-press) — they reset on every restart.
 3. **Export image** — the `.image` itself still can't leave the device (fileouts

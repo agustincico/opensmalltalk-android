@@ -14,7 +14,14 @@ that a third party knows exactly what they're trusting and what would have to be
 Only **`libsqueak_jni.so` is built by this repo's build system** (from
 `app/src/main/cpp/squeak_jni.c`, via CMake/NDK). Everything else is a committed prebuilt.
 
-## Provenance (read from strings in the binaries)
+## Provenance
+
+**Since 2026-08-12 the VM and all 20 plugin/display/sound modules are built by
+`scripts/build-vm-android.sh`** from upstream commit `a4d3da0` (branch `Cog`) with the
+Android NDK — see [the recipe below](#reproducible-today-cross-compiling-the-vm-with-the-android-ndk).
+The support libraries (libX11, libcairo, libpango, libglib, …) are still Termux prebuilts.
+
+### The previous binaries, for the record (read from strings in them)
 
 - **`libsqueak.so`** — built from an `opensmalltalk-vm` checkout at
   `/data/data/com.termux/files/home/opensmalltalk-vm`, **Stack/Spur** flavour
@@ -35,41 +42,70 @@ Only **`libsqueak_jni.so` is built by this repo's build system** (from
 So: everything native was produced **on an Android phone under Termux**, and the VM and the
 plugins came from two different source trees.
 
-## Reproducible today: the VM (Stack/Spur)
+## Reproducible today: cross-compiling the VM with the Android NDK
 
-`scripts/apply-fixes-stack.sh` applies the 8 source patches needed to compile the standard
-Linux VM under Termux/Android:
-
-| # | Patch |
-|---|---|
-| 1 | create `platforms/Cross/plugins/sqPluginsSCCSVersion.h` |
-| 2 | create `platforms/Cross/vm/sqSCCSVersion.h` |
-| 3 | `arm64abicc.c` — `valloc` |
-| 4 | `openssl_overlay.h` — `strverscmp` |
-| 5 | `UnixOSProcessPlugin.c` — missing POSIX functions |
-| 6 | `sqUnixUUID.c` — UUID header for Android/Termux |
-| 7 | `sqUnixMain.c` — `sqSCCSVersion.h` include path |
-| 8 | disable `BitBltArm64.c` (Termux assembler issues) |
-
-### Procedure
-
-Requires an **aarch64 Termux** environment (this is how it was done; a generic aarch64 Linux
-toolchain has not been tried). Install at least: `git`, `clang`, `make`, `autoconf`,
-`automake`, `libtool`, `pkg-config`, plus the X11/cairo/pango/glib/uuid/iconv/zlib dev
-packages.
+`scripts/build-vm-android.sh` builds the VM **and all its plugins** from a pinned upstream
+commit, on a desktop machine, with the Android NDK. No phone and no Termux install are
+needed. It replaces the old `apply-fixes-stack.sh`, which patched by absolute line number
+and only ran on the device.
 
 ```bash
-git clone https://github.com/OpenSmalltalk/opensmalltalk-vm
-# Patch the VM checkout (pass its path; the script refuses anything else):
-bash /path/to/opensmalltalk-android/scripts/apply-fixes-stack.sh ~/opensmalltalk-vm
-
-cd ~/opensmalltalk-vm/building/linux64ARMv8/squeak.stack.spur/build
-cp ../plugins.int . && cp ../plugins.ext .
-bash ../../../../platforms/unix/config/configure \
-     --with-src=src/spur64.stack --disable-cogit CC=clang
-sed -i 's/-luuid -lz -lpthread -lm/-luuid -lz -lpthread -lm -liconv/g' Makefile
-make
+brew install patchelf pkg-config          # or your platform's equivalents
+./scripts/build-vm-android.sh             # ~10 min; override WORK=, NDK=, API=, COMMIT=
 ```
+
+Pinned inputs: upstream `opensmalltalk-vm` branch **`Cog`** at
+**`a4d3da0ac21d4b95dcc3eb77f7a3c1e24aab003c`**, **NDK 26.2.11394342**, Android **API 28**,
+and an Android sysroot assembled from ~30 **Termux** aarch64 packages (X11, GL, glib/pango/
+cairo, zlib, iconv, uuid) — the same provenance as the support libraries the APK bundles,
+so headers and shipped `.so` files agree.
+
+Result, verified 2026-08-12: `squeak` (5.5 MB, ELF aarch64 PIE, `/system/bin/linker64`),
+exporting `main` — the entry point `squeak_jni.c` reaches via `dlsym` — with a `NEEDED` set
+identical to the previously shipped `libsqueak.so`, plus **20 plugin/display/sound modules**.
+Every artifact is **16 KB-page aligned**. It boots Cuis 7.7 on the emulator and the World
+menu responds to touch.
+
+### The four source patches
+
+Each one extends a guard upstream already has, which is why they are small enough to send
+upstream (see [UPSTREAMING.md](UPSTREAMING.md)):
+
+| File | Fix |
+|---|---|
+| `platforms/unix/plugins/SqueakSSL/openssl_overlay.h` | `strverscmp` is a GNU extension; upstream already excludes musl, exclude Bionic too |
+| `platforms/Cross/plugins/IA32ABI/arm64abicc.c` | `valloc()` does not exist in Bionic → `posix_memalign` |
+| `platforms/Cross/vm/sqVirtualMachine.c` + `platforms/unix/vm/sqUnixMain.c` | Bionic's `FILE` is opaque, so `*stdout = *output` will not compile — exactly the musl case upstream already handles with no-op `pushOutputFile`/`popOutputFile` stubs |
+| `scripts/android/sqAndroidCompat.h` (force-included) | `getdtablesize()` and `confstr()` exist at **no** Bionic API level; `login_tty` lives in `<utmp.h>` |
+
+Two more are build-environment issues, not VM bugs: `platforms/unix/config/configure`'s
+`AC_REQUIRE_SIZEOF` uses `AC_TRY_RUN`, which can never work when cross-compiling (replaced
+with a compile-time static assertion), and `CameraPlugin` is dropped because it is V4L2-only
+and Android apps cannot open `/dev/video*`.
+
+### Things that only bite when cross-compiling
+
+- **`getversion` is a build tool.** The Makefile compiles it with `$(CC)` — here the *cross*
+  compiler — so the build host cannot run it. Build it for the host instead.
+- **The `squeak` target runs the binary it just linked** to stamp a version. From a cross
+  build that fails with `cannot execute binary file`, so `make` ends in **Error 126**. This
+  is expected and happens *after* the VM and every plugin are already written.
+- **Bionic's API floor is real.** `nl_langinfo` needs API 26, `glob`/`globfree` need 28, and
+  `backtrace` needs 33 (handled with upstream's own `NOEXECINFO`). Building at API 24, as
+  the previously shipped binaries did, requires Termux's `libandroid-support`/`-glob` shims.
+- **`AC_PATH_X` and `PKG_CHECK_MODULES` both fail silently when cross-compiling**, quietly
+  disabling `ClipboardExtendedPlugin` and `UnicodePlugin`. Pass `--x-includes`/`--x-libraries`
+  and `UNICODE_PLUGIN_CFLAGS`/`_LIBS` explicitly.
+- **Plugins must name `libsqueak.so`.** On a normal Unix they resolve VM symbols from the
+  executable's dynamic symbol table; here the "executable" is itself `dlopen()`ed, so a
+  plugin that does not list it fails with `cannot locate symbol "localeEncoding"`. The
+  script adds it with `patchelf` after linking.
+
+### What this fixed
+
+The rebuilt `XDisplayControlPlugin.so` no longer drags in `libSM.so`, `libICE.so` and
+`libandroid-execinfo.so` — the over-linking that made it fail to `dlopen` (a long-standing
+item in `CLAUDE.md`'s backlog). Its `NEEDED` set is now entirely libraries the APK ships.
 
 ### Installing the result
 
@@ -86,16 +122,12 @@ If you add or rename a plugin, update the `deps_to_load[]` list in
 
 ## Not reproducible today (the honest gaps)
 
-1. **No pinned upstream commit.** `apply-fixes-stack.sh` applies 5 of its 8 patches with
-   `sed` line addresses (e.g. `10i`, `8s`, and absolute line numbers). On any other revision
-   those silently patch nothing, or the wrong line. The revision it was written against is
-   not recorded. **Fix:** pin a commit SHA and convert the line-addressed patches to context
-   diffs (`git apply`).
-2. **The plugins have no build procedure.** They came from a `squeak.cog.spur` tree in a
-   *different* checkout (`opensmalltalk-vm-cog-clean`) with unknown patches; the script above
-   only covers `squeak.stack.spur`. **Fix:** rebuild the plugins in the stack tree
-   (`plugins.int` / `plugins.ext`) and confirm they load, or document the cog tree's patches.
-   This also blocks fixing the known over-linked `XDisplayControlPlugin.so`.
+1. **~~No pinned upstream commit~~ — closed 2026-08-12.** `scripts/build-vm-android.sh` pins
+   commit `a4d3da0` on branch `Cog` and expresses every fix as an `#ifdef`-guarded edit or a
+   force-included header, not a `sed` line address.
+2. **~~The plugins have no build procedure~~ — closed 2026-08-12.** All 20 modules are built
+   from the same pinned `squeak.stack.spur` tree as the VM, and the over-linked
+   `XDisplayControlPlugin.so` is fixed as a side effect.
 3. **~~The support libraries have no full manifest~~ — closed.** All shipped library
    versions are now recorded in
    [THIRD-PARTY-NOTICES.md](../THIRD-PARTY-NOTICES.md#recovered-versions-read-from-the-shipped-binaries):
@@ -106,13 +138,15 @@ If you add or rename a plugin, update the `deps_to_load[]` list in
    source device's Termux `pkg list-installed` (captured 2026-08-09). Remaining nice-to-have:
    a copy script / per-version license texts, or switching to libraries built from source
    with the NDK.
-4. **`apply-fixes-stack.sh` is GNU-`sed`-only** (BSD/macOS `sed -i` differs), and assumes
-   Termux paths/toolchain.
+4. **The ~60 support libraries are still Termux prebuilts**, copied from a phone rather than
+   built here. The sysroot the build script assembles now downloads them from Termux's
+   package repository (versioned, checksummed by apt) instead, so switching the *shipped*
+   libraries to that same source is a small, well-defined next step.
+5. **The build needs a network** the first time (Termux package downloads + the git clone),
+   and pins no checksums for the `.deb`s beyond what apt's index provides.
 
-**Gaps 1–2 are recoverable only from the phone that produced the binaries** — while it
-still exists, capture the two VM checkouts' `git log -1` and their
-`plugins.int`/`plugins.ext`. (Gap 3 was closed 2026-08-09 with the device's
-`pkg list-installed` plus the binaries' own version banners.)
+The old `scripts/apply-fixes-stack.sh` (GNU-`sed`-only, Termux-only, line-addressed) is
+superseded by `scripts/build-vm-android.sh` and kept only for reference.
 
 ## Verifying what you have
 

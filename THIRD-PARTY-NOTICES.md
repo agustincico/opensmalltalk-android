@@ -17,7 +17,12 @@ not by MIT.** This file discloses what is bundled so redistributors can comply.
 
 - **OpenSmalltalk VM** (`libsqueak.so`, `vm-display-*.so`, `vm-sound-*.so`, and the
   `*Plugin.so` files) — https://github.com/OpenSmalltalk/opensmalltalk-vm — MIT.
-  Built from upstream sources (Stack/Spur interpreter); see docs/BUILDING-VM.md.
+  Since **2026-08-12** these are built by `scripts/build-vm-android.sh` from the pinned
+  upstream commit **`a4d3da0ac21d4b95dcc3eb77f7a3c1e24aab003c`** (branch `Cog`,
+  `squeak.stack.spur`, interpreted Stack/Spur 64-bit), cross-compiled with **Android NDK
+  26.2.11394342** clang against API 28. See [docs/BUILDING-VM.md](docs/BUILDING-VM.md) to
+  reproduce them. (They previously came from a phone under Termux at commit `d621595`, with
+  the plugins from a separate `squeak.cog.spur` checkout.)
 
 ## Embedded X11 server
 

@@ -24,15 +24,26 @@ This repo is two very different things glued together.
 **Belongs upstream (small, in scope):** the changes that make the *Unix VM compile and
 run on Android/Bionic*. Verified still needed against the current `Cog` branch:
 
-| Our fix (`scripts/apply-fixes-stack.sh`) | Upstream status | How to contribute it |
+All of these are now **verified against a real NDK cross-build** of commit `a4d3da0` that
+boots on a device (see [BUILDING-VM.md](BUILDING-VM.md)) — not inferred from the old
+line-addressed `sed` script, which turned out to be partly unnecessary and partly wrong.
+
+| Fix | Shape | Ready to send? |
 |---|---|---|
-| `valloc` → `posix_memalign` in `platforms/Cross/plugins/IA32ABI/arm64abicc.c` | still `valloc` (line ~316); absent in Bionic | tiny portable fix, no ifdef needed |
-| `strverscmp` in `platforms/unix/plugins/SqueakSSL/openssl_overlay.h` | still there (~548); GNU-only, absent in Bionic **and musl** | upstream *already* has a fallback branch — just extend its condition |
-| `getdtablesize()` / `confstr()` in `UnixOSProcessPlugin.c` | still there (764, 1437, 1443) | ⚠️ `src/` is **generated** from VMMaker — do **not** patch it. Put Bionic shims in a `platforms/unix` header instead (or take it to the OSProcess/VMMaker maintainers) |
-| uuid header in `platforms/unix/plugins/UUIDPlugin/sqUnixUUID.c` | uses `HAVE_UUID_UUID_H` from configure | right fix is autoconf detection under Android, not a hardcoded branch |
-| `sqSCCSVersion.h` / `sqPluginsSCCSVersion.h` creation | generated upstream from git | **not** a portability fix — a build-environment workaround; leave out |
-| include-path edit in `sqUnixMain.c` | — | consequence of the above; leave out |
-| disabling `BitBltArm64.c` | — | ⚠️ that is the **optimized blitter**; disabling it costs graphics performance. Needs real diagnosis of the Termux/clang assembler failure before it can be proposed (or fixed for ourselves) |
+| `strverscmp` in `platforms/unix/plugins/SqueakSSL/openssl_overlay.h` | GNU-only, absent in Bionic **and** musl. Upstream already has the fallback; extend `#if defined(__linux__)` with `&& !defined(__ANDROID__)` | **yes** — 1 line |
+| `valloc()` → `posix_memalign()` in `platforms/Cross/plugins/IA32ABI/arm64abicc.c` | `valloc` does not exist in Bionic | **yes** — 6 lines, `__ANDROID__`-guarded |
+| opaque `FILE` in `platforms/Cross/vm/sqVirtualMachine.c` + `platforms/unix/vm/sqUnixMain.c` | `static FILE stdoutStack[]` and `*stdout = *output` need glibc's complete `FILE`. This is **exactly** the musl case upstream already handles with no-op `pushOutputFile`/`popOutputFile`; widen the two guards | **yes** — 3 lines, and it fixes musl-adjacent libcs generally |
+| `getdtablesize()` / `confstr()` / `login_tty` | exist at **no** Bionic API level. Our `sqAndroidCompat.h` implements them (`sysconf(_SC_OPEN_MAX)`; a `_CS_PATH`-only `confstr`) and is force-included | **as a `platforms/unix/vm` header** — never patch `src/`, it is generated from VMMaker |
+| `AC_REQUIRE_SIZEOF` uses `AC_TRY_RUN` in `platforms/unix/config/acinclude.m4` | aborts *any* cross build with "cannot run test program while cross compiling"; a compile-time static assertion works for native and cross alike | **yes, and valuable beyond Android** — this blocks every cross-compile target |
+| ~~uuid header in `sqUnixUUID.c`~~ | not needed — `configure` sets `HAVE_UUID_UUID_H` correctly once the sysroot has the header | drop |
+| ~~create `sqSCCSVersion.h` / `sqPluginsSCCSVersion.h`~~ | not needed — upstream's own `scripts/updateSCCSVersions` does it given a real git clone | drop |
+| ~~include-path edit in `sqUnixMain.c`~~ | consequence of the above | drop |
+| ~~disable `BitBltArm64.c`~~ | not needed *for us*: `--enable-fast-bitblt` is **off by default** on aarch64 upstream, so nothing disables it. But it does **not** compile with NDK clang 17 either — ~5 inline-asm errors (`invalid operand for instruction`, `constraint 'I' expects an integer constant expression`, `Immediate too large for register`). So this is a **real clang incompatibility in the optimized blitter**, not the Termux assembler quirk we assumed | drop from our patch set; **report as a separate upstream issue** with the error list |
+
+So the old "8 patches" are really **4 source fixes plus 1 build-system fix**, and two of the
+five (the `FILE` guard and the `AC_TRY_RUN` removal) fix problems that are not Android-specific
+at all — good openers for the issue. The BitBlt finding is a bug report we owe upstream,
+independent of the port.
 
 Plus a `building/android64ARMv8/` config mirroring `linux64ARMv8`, so the port is
 reproducible and CI-able instead of living in a shell script here.
@@ -43,21 +54,22 @@ chooser/library, file-in/fileout plumbing, touch/zoom handling, and especially t
 `.so` blobs**. A VM repo does not host a phone app, and blobs harvested from a device
 are exactly what upstream would (rightly) reject.
 
-## Prerequisite before opening the PR
+## Prerequisite before opening the PR — **done 2026-08-12**
 
-**Build the VM from a pinned upstream commit and prove it runs.** Today's binaries came
-from a phone at an unknown revision, and the fixes are applied by `sed` line numbers.
-To upstream them honestly:
+The rebuild that had to happen first is finished, so the PR now rests on evidence rather
+than on a script nobody could re-run:
 
-1. Clone `opensmalltalk-vm` at a pinned commit of `Cog`.
-2. Re-express the fixes as real diffs (ifdef-guarded), not line-addressed `sed`.
-3. Build for `aarch64` Android — either on-device under Termux (how it was done) or,
-   better, **cross-compiled with the Android NDK** so anyone can reproduce it.
-4. Drop the resulting `libsqueak.so` + plugins into this app and verify an image boots.
-5. Then open the PR against `Cog`.
+1. ✅ Cloned `opensmalltalk-vm` at pinned commit `a4d3da0` of `Cog`.
+2. ✅ Re-expressed every fix as an `#ifdef`-guarded edit or a force-included header.
+3. ✅ **Cross-compiled with the Android NDK** on a desktop — `scripts/build-vm-android.sh`,
+   reproducible by anyone, no phone and no Termux install needed.
+4. ✅ Installed the resulting VM + 20 plugins into the app and **verified Cuis 7.7 boots**
+   on the emulator and the World menu responds to touch.
+5. ⬜ Open the issue, then the PR, against `Cog`.
 
-(Note: this rebuild is *not* needed for Google Play — the shipped binaries are already
-16 KB-page aligned. It is needed for **provenance and for contributing back**.)
+Two claims from the earlier plan did **not** survive contact with the build, and the PR
+should not repeat them: three of the "8 patches" turned out to be unnecessary, and the
+BitBlt one was misdiagnosed (see the table above).
 
 ## Where to propose it
 

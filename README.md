@@ -14,8 +14,9 @@ it, and allow "install from unknown sources". Releases update each other in plac
 signing key) — point [Obtainium](https://github.com/ImranR98/Obtainium) at this repo for
 automatic updates.
 
-Requirements: **ARM64 phone** (arm64-v8a), Android 5.1+. Images must be **64-bit Spur**
-(32-bit images are rejected with a clear message instead of crashing).
+Requirements: **ARM64 phone** (arm64-v8a), **Android 9+** (API 28 — the level the VM's C
+library calls need). Images must be **64-bit Spur** (32-bit images are rejected with a clear
+message instead of crashing).
 
 ## What you can do
 
@@ -69,10 +70,15 @@ submodules). Toolchain: **JDK 17**, AGP 8.7.3, Gradle 8.9 (wrapper included), ND
 compileSdk/targetSdk 35, arm64-v8a only. A clone builds the same APK as the official
 release; `./gradlew bundleRelease` produces the Play Store `.aab`.
 
+The native VM is committed as a prebuilt, but it is **not** a mystery binary: it is built
+from a pinned upstream commit by `scripts/build-vm-android.sh`, which cross-compiles the
+OpenSmalltalk VM and all 20 of its plugins for Android with the NDK, on your desktop —
+no phone or Termux install needed.
+
 - [docs/DEV-LOOP.md](docs/DEV-LOOP.md) — the emulator dev loop (build → deploy →
   observe → drive input), including Smalltalk text-tests wired into logcat.
-- [docs/BUILDING-VM.md](docs/BUILDING-VM.md) — provenance of the prebuilt native VM and
-  how to rebuild it from opensmalltalk-vm sources.
+- [docs/BUILDING-VM.md](docs/BUILDING-VM.md) — the NDK cross-compile recipe, the four
+  Bionic portability patches, and what still comes from Termux.
 - [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — bundled binaries and licenses.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — open bugs, subtleties, UX backlog, and the
   Google Play path (cost + what modernization it needs).

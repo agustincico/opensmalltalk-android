@@ -165,15 +165,18 @@ libs, or ship those `.so`s, to actually load it.
 
 ## Reproducibility / provenance (mostly done)
 
-- **Native binary versions** are all recorded ([`THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md)):
-  read from the shipped `.so` banners + the source device's Termux `pkg list-installed`.
-  VM = `opensmalltalk-vm` **7.0rc2-202511100848** (VMMaker.oscog-eem.3682, commit
-  d621595, Nov 2025), `squeak.stack.spur`; display/sound plugins from a `squeak.cog.spur`
-  tree. Remaining: per-version LGPL **license texts** for redistribution-grade
-  compliance; a copy script; pinning the plugin checkout's exact commit.
-- **VM rebuild from source:** [`docs/BUILDING-VM.md`](BUILDING-VM.md) +
-  `scripts/apply-fixes-stack.sh` (5 of 8 patches are still line-addressed — convert to
-  context diffs against a pinned commit).
+- **✅ The VM and every plugin are now built from source (2026-08-12).**
+  `scripts/build-vm-android.sh` cross-compiles `opensmalltalk-vm` `Cog` @ **`a4d3da0`**
+  (`squeak.stack.spur`) and all **20** plugin/display/sound modules with the Android NDK 26
+  against API 28, on a desktop. This retires the phone-only, line-addressed
+  `apply-fixes-stack.sh` and the split VM/plugin provenance (plugins used to come from a
+  *different* `squeak.cog.spur` checkout). See [`docs/BUILDING-VM.md`](BUILDING-VM.md).
+  Verified: boots Cuis 7.7, touch works, all artifacts 16 KB-aligned.
+- **Support libraries are the remaining prebuilts.** ~60 X11/cairo/pango/glib `.so` still
+  come from a Termux install; versions are recorded in
+  [`THIRD-PARTY-NOTICES.md`](../THIRD-PARTY-NOTICES.md). The build script already downloads
+  its *sysroot* from Termux's package repo, so building the shipped copies the same way is
+  a small, well-scoped next step. Also still open: per-version LGPL **license texts**.
 - **Drop the dead ABIs:** `abiFilters` still ships `armeabi-v7a`/`x86_64` JNI wrappers
   that can never run the arm64-only VM.
 - Stale second build path (`Makefile`, hardcoded Homebrew SDK) and `jcenter()` in the
@@ -183,8 +186,15 @@ libs, or ship those `.so`s, to actually load it.
 
 ## Google Play — technical work DONE (2026-08-12), account work remains
 
-**The two blockers this roadmap called "weeks of work" are done**, and the VM did NOT
-need rebuilding. `./gradlew bundleRelease` now produces a Play-ready signed `.aab`.
+**The two blockers this roadmap called "weeks of work" are done.** `./gradlew bundleRelease`
+produces a Play-ready signed `.aab`. The VM was **not** required to be rebuilt for Play —
+the shipped binaries already passed. It was rebuilt anyway (2026-08-12) for provenance and
+to enable the upstream contribution; the rebuilt artifacts are 16 KB-aligned by explicit
+`-Wl,-z,max-page-size=16384`, since NDK 26 does not default to it.
+
+**One consequence to be aware of:** the rebuilt VM targets **API 28**, so `minSdkVersion`
+moved 22 → 28. That floor was previously fiction anyway — every shipped `.so` already
+declared API 24.
 
 ### ✅ 16 KB page size — done, without recompiling the VM
 The old estimate assumed all ~100 prebuilt Termux `.so` were 4 KB-aligned. Measured
