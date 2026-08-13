@@ -17,7 +17,7 @@ set -euo pipefail
 HERE="$(dirname "$0")"
 source "$HERE/env.sh"
 
-MODE="apk"; NO_BUILD=0; FRESH=0; WINDOW=0; IMG=""; CHANGES=""; ST=""
+MODE="apk"; NO_BUILD=0; FRESH=0; WINDOW=0; IMG=""; CHANGES=""; SOURCES=""; ST=""
 while [ $# -gt 0 ]; do case "$1" in
   --no-build)     NO_BUILD=1 ;;
   --fresh)        FRESH=1 ;;
@@ -25,6 +25,7 @@ while [ $# -gt 0 ]; do case "$1" in
   --observe-only) MODE="observe" ;;
   --image)        MODE="image"; IMG="$2"; shift ;;
   --changes)      CHANGES="$2"; shift ;;
+  --sources)      SOURCES="$2"; shift ;;
   --st)           ST="$2"; shift ;;
   *) loop_err "unknown arg: $1"; exit 2 ;;
 esac; shift; done
@@ -43,7 +44,8 @@ case "$MODE" in
     bash "$HERE/deploy.sh" ${dargs[@]+"${dargs[@]}"}
     ;;
   image)
-    pargs=("$IMG"); [ -n "$CHANGES" ] && pargs+=(--changes "$CHANGES"); [ -n "$ST" ] && pargs+=(--st "$ST")
+    pargs=("$IMG"); [ -n "$CHANGES" ] && pargs+=(--changes "$CHANGES")
+    [ -n "$SOURCES" ] && pargs+=(--sources "$SOURCES"); [ -n "$ST" ] && pargs+=(--st "$ST")
     bash "$HERE/push-image.sh" "${pargs[@]}"
     ;;
   observe) : ;;

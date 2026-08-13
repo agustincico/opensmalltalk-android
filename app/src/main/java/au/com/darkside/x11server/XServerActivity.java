@@ -710,6 +710,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     // Assume the .changes lives next to the .image (same folder) and
                     // grab it automatically — no second picker.
                     copySiblingChanges(imgUri, imageBase(name) + ".changes");
+                    copySiblingSources(imgUri, name);
                     setCurrentImageName(name);
                     Toast.makeText(this, "Image loaded — restarting.", Toast.LENGTH_SHORT).show();
                     restartApp();
@@ -763,6 +764,48 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     }
 
     /**
+     * Try to bring in the .sources file sitting next to a picked .image.
+     *
+     * Two things make this a guess rather than a lookup. A .sources is NOT named
+     * after its image — Cuis7.7-7976.image wants Cuis7.6.sources, Squeak 6.0 wants
+     * SqueakV60.sources — because the name comes from the image's internal
+     * SourceFileVersionString, which we cannot read from out here. And
+     * ACTION_OPEN_DOCUMENT grants access to one document, not its folder, so the
+     * directory cannot be listed. So: try the handful of names upstream actually
+     * ships, and give up quietly.
+     *
+     * Getting this right matters more than it looks — without it Cuis opens a modal
+     * "cannot locate the sources file" warning on every single launch, and the
+     * browser shows decompiled code with no comments.
+     */
+    private void copySiblingSources(Uri imgUri, String imageName) {
+        String[] candidates = imageName.toLowerCase().startsWith("squeak")
+                ? new String[]{ "SqueakV60.sources", "SqueakV50.sources", "SqueakV41.sources" }
+                : new String[]{ "Cuis7.8.sources", "Cuis7.6.sources", "Cuis7.4.sources",
+                                "Cuis7.2.sources", "Cuis7.0.sources", "Cuis6.0.sources",
+                                "Cuis5.0.sources" };
+        // Anything already here (e.g. downloaded earlier) is good enough — the VM
+        // looks the file up by name, so a second copy buys nothing.
+        for (String c : candidates) if (new File(getFilesDir(), c).isFile()) return;
+        try {
+            String docId = DocumentsContract.getDocumentId(imgUri);
+            if (docId == null) return;
+            int slash = Math.max(docId.lastIndexOf('/'), docId.lastIndexOf(':'));
+            String dir = slash >= 0 ? docId.substring(0, slash + 1) : "";
+            for (String cand : candidates) {
+                File dst = new File(getFilesDir(), cand);
+                try {
+                    Uri u = DocumentsContract.buildDocumentUri(imgUri.getAuthority(), dir + cand);
+                    if (copyUriToFile(u, dst)) { Log.i(TAG, "copied sibling " + cand); return; }
+                } catch (Exception ignored) { /* next candidate */ }
+                if (dst.exists()) dst.delete();
+            }
+        } catch (Exception e) {
+            Log.i(TAG, "no sibling .sources: " + e.getMessage());
+        }
+    }
+
+    /**
      * Launch the access control list editor.
      */
     private void launchAccessControlEditor() {
@@ -781,7 +824,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * logo), so the funding shows every time the user loads an image — right in the
      * dialog, framed dark for contrast on the light dialog background.
      */
-    private View buildLoadImageTitle() {
+    private View buildLoadImageTitle(String note) {
         android.widget.LinearLayout root = new android.widget.LinearLayout(this);
         root.setOrientation(android.widget.LinearLayout.VERTICAL);
         root.setPadding(dp(22), dp(18), dp(22), dp(4));
@@ -827,6 +870,22 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
         hlp.topMargin = dp(16);
         root.addView(heading, hlp);
+
+        // Why we got sent back here, if we were. AlertDialog's setMessage is
+        // unavailable once setItems is used (the list replaces the message view), and
+        // a Toast is gone before the user has finished reading it — so the
+        // explanation goes here, directly above the options they will retry with.
+        if (note != null && !note.isEmpty()) {
+            android.widget.TextView warn = new android.widget.TextView(this);
+            warn.setText(note);
+            warn.setTextColor(0xffb00020);
+            warn.setTextSize(13);
+            android.widget.LinearLayout.LayoutParams wlp = new android.widget.LinearLayout.LayoutParams(
+                    android.widget.LinearLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.LinearLayout.LayoutParams.WRAP_CONTENT);
+            wlp.topMargin = dp(8);
+            root.addView(warn, wlp);
+        }
         return root;
     }
 
@@ -1000,8 +1059,6 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * there is something to delete) a delete submenu to reclaim space.
      */
     private void showLoadImageDialog(String message) {
-        if (message != null)
-            Toast.makeText(this, message, Toast.LENGTH_LONG).show();
         final File[] local = localImages();
         final java.util.ArrayList<String> items = new java.util.ArrayList<>();
         for (File f : local)
@@ -1012,7 +1069,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         items.add("From device…");
         if (local.length > 0) items.add("Delete an image…");
         new AlertDialog.Builder(this)
-                .setCustomTitle(buildLoadImageTitle())
+                .setCustomTitle(buildLoadImageTitle(message))
                 .setItems(items.toArray(new String[0]), (dialog, which) -> {
                     if (which < local.length) { openLocalImage(local[which]); return; }
                     int k = which - local.length;
@@ -1115,16 +1172,47 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * little-endian format number. 64-bit Spur images (68021 / 68531 / 68533) → false.
      */
     private boolean is32BitSpurImage(File image) {
-        if (image == null || !image.isFile()) return false;
+        int fmt = imageFormatMagic(image);   // -1 (unreadable) → let the boot path's
+        return fmt == 6521 || fmt == 6505 || fmt == 6504;  // crash-loop guard cover it
+    }
+
+    /**
+     * Read an image's 4-byte format magic. -1 if it can't be read.
+     * 68021 = Cuis/Squeak 64-bit Spur, 68531/68533 = Squeak 6.0.
+     */
+    private int imageFormatMagic(File image) {
+        if (image == null || !image.isFile()) return -1;
         try (InputStream in = new java.io.FileInputStream(image)) {
             byte[] b = new byte[4];
             int n = 0; while (n < 4) { int r = in.read(b, n, 4 - n); if (r < 0) break; n += r; }
-            if (n < 4) return false;
-            int fmt = (b[0] & 0xFF) | ((b[1] & 0xFF) << 8) | ((b[2] & 0xFF) << 16) | ((b[3] & 0xFF) << 24);
-            return fmt == 6521 || fmt == 6505 || fmt == 6504;  // 32-bit Spur / V3
+            if (n < 4) return -1;
+            return (b[0] & 0xFF) | ((b[1] & 0xFF) << 8) | ((b[2] & 0xFF) << 16) | ((b[3] & 0xFF) << 24);
         } catch (Exception e) {
-            return false;  // unreadable → let the boot path deal with it (guard a still covers it)
+            return -1;
         }
+    }
+
+    /**
+     * Throw unless this file really is a 64-bit Spur image we can boot. Called on
+     * anything freshly downloaded, before it becomes the image the app restarts
+     * into — the point being to fail while the chooser is still on screen and can
+     * say why, instead of after a restart into a VM abort.
+     */
+    private void assertUsableImage(File image) throws IOException {
+        if (image == null || !image.isFile())
+            throw new IOException("the download produced no image file");
+        // Real 64-bit images are tens of MB; anything tiny is an error page or a stub.
+        if (image.length() < 1024 * 1024)
+            throw new IOException("the downloaded file is only " + image.length()
+                    + " bytes — the server sent something that is not an image "
+                    + "(a captive portal or a login page can do this)");
+        int fmt = imageFormatMagic(image);
+        if (fmt == 68021 || fmt == 68531 || fmt == 68533) return;
+        image.delete();
+        if (fmt == 6521 || fmt == 6505 || fmt == 6504)
+            throw new IOException("that image is 32-bit — this VM needs a 64-bit Spur image");
+        throw new IOException("the downloaded file is not a Smalltalk image "
+                + "(format magic " + fmt + ") — the network may have intercepted the download");
     }
 
     /** Download a Squeak/Cuis/Cuis University image into filesDir on a background thread, then restart. */
@@ -1143,6 +1231,14 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 if (flavor.equals("Squeak")) imageName = downloadSqueak(pd);
                 else if (flavor.equals("Cuis University")) imageName = downloadCuisUniversity(pd);
                 else imageName = downloadCuis(pd);
+                // Never hand the boot path something we have not looked at. Whatever
+                // arrived is about to be recorded as THE image and the app restarts
+                // into it, so a captive portal's HTML login page — served with a
+                // cheerful 200 — would be booted as a Spur image, the VM would abort,
+                // and the user would land on "the previous image couldn't start",
+                // which reads exactly like "downloading is broken".
+                File got = new File(getFilesDir(), imageName);
+                assertUsableImage(got);
                 // Remember which image boots; the file keeps its real name, so it also
                 // stays in the Load-image list for offline reopening later.
                 setCurrentImageName(imageName);
@@ -1153,10 +1249,16 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 });
             } catch (Exception e) {
                 Log.e(TAG, "download failed", e);
-                final String msg = e.getMessage();
+                // getMessage() is null for plenty of IO exceptions ("Download failed:
+                // null" helps nobody), so fall back to the exception itself.
+                final String msg = (e.getMessage() != null && !e.getMessage().isEmpty())
+                        ? e.getMessage() : e.toString();
                 runOnUiThread(() -> {
                     pd.dismiss();
-                    Toast.makeText(this, "Download failed: " + msg, Toast.LENGTH_LONG).show();
+                    // Reopen the chooser rather than only toasting. On a first run there
+                    // is nothing behind this dialog — a bare Toast leaves the user
+                    // staring at an empty app with no way back in.
+                    showLoadImageDialog("Download failed: " + msg);
                 });
             }
         }).start();
@@ -1171,12 +1273,14 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         if (best < 0) throw new Exception("no Squeak 6.0 build listed");
         String baseName = "Squeak6.0-" + best + "-64bit";
         String url = "https://files.squeak.org/6.0/" + baseName + "/" + baseName + ".zip";
+        // ~25 MB zip, and the image alone unpacks to ~50 MB with ~55 MB of sources.
+        requireFreeSpace(160L * 1024 * 1024, "Squeak");
         File zip = new File(getCacheDir(), "download.zip");
-        downloadToFile(url, zip, pd, "Downloading " + baseName);
-        setProgressMsg(pd, "Unzipping…");
-        String imageName = unzipBundle(zip);
-        zip.delete();
-        return imageName;
+        try {
+            downloadToFile(url, zip, pd, "Downloading " + baseName);
+            setProgressMsg(pd, "Unzipping…");
+            return unzipBundle(zip);
+        } finally { zip.delete(); }
     }
 
     private String downloadCuis(ProgressDialog pd) throws Exception {
@@ -1205,7 +1309,14 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                     bestMj = mj; bestMn = mn; bestBd = bd; imgName = name; imgUrl = e.getValue();
                 }
             }
-            if (name.endsWith(".sources")) { srcName = name; srcUrl = e.getValue(); }
+            // Take the highest-versioned .sources deterministically. Picking
+            // "whichever the HashMap happens to yield last" is a coin flip when the
+            // folder carries more than one, and a mismatched sources file is worse
+            // than none: Cuis shows the same "cannot locate" warning either way, but
+            // a wrong one silently maps method source text to the wrong code.
+            if (name.endsWith(".sources") && (srcName == null || name.compareTo(srcName) > 0)) {
+                srcName = name; srcUrl = e.getValue();
+            }
         }
         if (imgUrl == null) throw new Exception("no Cuis .image found");
         String chgName = imgName.replace(".image", ".changes");
@@ -1229,19 +1340,59 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
                 "\"browser_download_url\"\\s*:\\s*\"([^\"]+windows64\\.zip)\"").matcher(json);
         if (!m.find()) throw new Exception("no windows64.zip in the latest Cuis University release");
         String url = m.group(1);
+        // ~205 MB of zip staged in the cache, then ~60 MB of image/changes/sources
+        // extracted next to it. Check up front instead of dying half-way through.
+        requireFreeSpace(280L * 1024 * 1024, "Cuis University");
         File zip = new File(getCacheDir(), "download.zip");
-        downloadToFile(url, zip, pd, "Downloading Cuis University (~200 MB)");
-        // Unzipping this one takes ~50 s on a phone (a 45 MB image plus changes and
-        // sources come out of it), and it is indeterminate, so say so rather than
-        // leaving the user looking at a spinner that seems stuck.
-        setProgressMsg(pd, "Unzipping — this takes a minute…");
-        String imageName = unzipBundle(zip);
-        zip.delete();
-        return imageName;
+        try {
+            downloadToFile(url, zip, pd, "Downloading Cuis University (~200 MB)");
+            // Unzipping this one takes ~50 s on a phone (a 45 MB image plus changes
+            // and sources come out of it), and it is indeterminate, so say so rather
+            // than leaving the user looking at a spinner that seems stuck.
+            setProgressMsg(pd, "Unzipping — this takes a minute…");
+            return unzipBundle(zip);
+        } finally {
+            // Always: a failure used to leave 205 MB parked in the cache directory.
+            zip.delete();
+        }
+    }
+
+    /** Fail before starting a large download rather than half-way through it. */
+    private void requireFreeSpace(long needBytes, String what) throws IOException {
+        long free = getFilesDir().getUsableSpace();
+        if (free >= needBytes) return;
+        throw new IOException(what + " needs about " + (needBytes / (1024 * 1024))
+                + " MB free, but this device has " + (free / (1024 * 1024))
+                + " MB. Free some space and try again.");
     }
 
     private void setProgressMsg(final ProgressDialog pd, final String msg) {
         runOnUiThread(() -> { pd.setIndeterminate(true); pd.setMessage(msg); });
+    }
+
+    /**
+     * Check the response before reading a body, and turn the failures users
+     * actually hit into sentences they can act on.
+     *
+     * getInputStream() already throws for >= 400, but with a message that is just
+     * the URL — useless in a Toast. The one worth naming specially is GitHub's
+     * rate limit: both Cuis entries call api.github.com unauthenticated, which is
+     * 60 requests/hour *per IP*, and mobile carriers put thousands of phones
+     * behind one address. On such a network the download simply fails, and
+     * "Download failed: https://api.github.com/..." tells the user nothing.
+     */
+    private void checkHttpOk(HttpURLConnection c, String urlStr) throws IOException {
+        int rc = c.getResponseCode();
+        if (rc >= 200 && rc <= 299) return;
+        if (rc == 403 || rc == 429) {
+            String left = c.getHeaderField("X-RateLimit-Remaining");
+            if ("0".equals(left) || rc == 429)
+                throw new IOException("GitHub is rate-limiting this network (shared mobile IPs hit "
+                        + "its 60-requests-per-hour cap). Try again in a few minutes, or on Wi-Fi.");
+        }
+        throw new IOException("server answered HTTP " + rc
+                + (c.getResponseMessage() != null ? " " + c.getResponseMessage() : "")
+                + " for " + urlStr);
     }
 
     /** GET a URL as a String (directory listing / JSON API). */
@@ -1250,11 +1401,14 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         c.setInstanceFollowRedirects(true);
         c.setConnectTimeout(20000); c.setReadTimeout(20000);
         c.setRequestProperty("User-Agent", "opensmalltalk-android");
-        try (InputStream in = c.getInputStream()) {
-            java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
-            byte[] buf = new byte[8192]; int n;
-            while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
-            return bo.toString("UTF-8");
+        try {
+            checkHttpOk(c, urlStr);
+            try (InputStream in = c.getInputStream()) {
+                java.io.ByteArrayOutputStream bo = new java.io.ByteArrayOutputStream();
+                byte[] buf = new byte[8192]; int n;
+                while ((n = in.read(buf)) != -1) bo.write(buf, 0, n);
+                return bo.toString("UTF-8");
+            }
         } finally { c.disconnect(); }
     }
 
@@ -1269,10 +1423,15 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         c.setInstanceFollowRedirects(true);
         c.setConnectTimeout(20000); c.setReadTimeout(30000);
         c.setRequestProperty("User-Agent", "opensmalltalk-android");
-        final int total = c.getContentLength();
+        final int total;
+        try {
+            checkHttpOk(c, urlStr);
+            total = c.getContentLength();
+        } catch (Exception e) { c.disconnect(); throw e; }
         runOnUiThread(() -> { pd.setMessage(label); pd.setIndeterminate(total <= 0); pd.setProgress(0); });
+        long got = 0;
         try (InputStream in = c.getInputStream(); FileOutputStream out = new FileOutputStream(part)) {
-            byte[] buf = new byte[65536]; int n; long got = 0, lastPct = -1;
+            byte[] buf = new byte[65536]; int n; long lastPct = -1;
             while ((n = in.read(buf)) != -1) {
                 out.write(buf, 0, n); got += n;
                 if (total > 0) {
@@ -1284,6 +1443,14 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             part.delete();
             throw e;
         } finally { c.disconnect(); }
+        // A connection dropped mid-transfer ends the read loop without an exception,
+        // so without this a half-downloaded image is renamed into place and looks
+        // perfectly loadable — until the VM aborts on it.
+        if (total > 0 && got != total) {
+            part.delete();
+            throw new IOException("connection dropped after " + got + " of " + total
+                    + " bytes — check the network and try again");
+        }
         if (!part.renameTo(dst)) { part.delete(); throw new IOException("could not move " + part + " into place"); }
         Log.i(TAG, "downloaded " + urlStr + " -> " + dst.getName() + " (" + dst.length() + " bytes)");
     }
