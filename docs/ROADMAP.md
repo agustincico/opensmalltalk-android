@@ -4,7 +4,8 @@ Durable backlog for **opensmalltalk-android** — what's shipped, what's broken,
 subtleties worth knowing, and the path to a Play Store release. Working notes with
 root-causes live in [`CLAUDE.md`](../CLAUDE.md); this file is the high-level plan.
 
-Last updated: 2026-08-12, release **v1.42** (Play-ready: targetSdk 35 + 16 KB pages).
+Last updated: 2026-08-13, **v1.43** — VM + all plugins now cross-compiled from pinned
+upstream sources with the NDK (minSdk 22 → 28), and the image-download path hardened.
 
 ---
 
@@ -80,19 +81,41 @@ user to the Android launcher instead of back to the **Load image** chooser.
   re-booting. Heuristic (can't distinguish quit from crash from OOM), and it still shows
   the launcher first.
 
-### 3. Latest Cuis (7.9 rolling) renders a blank world — WORKED AROUND
+### 3. Latest Cuis (7.9 rolling) renders a blank world — WORKED AROUND, likely fixable now
 Every Cuis 7.9 rolling snapshot (7983 … 8090/master) boots but **never starts its UI**
 on this VM (diagnosed: 2026 startup-sequence rework; upstream fixed it in updates
-**8093/8094**, which landed *after* the current rolling image). **Action:** the in-app
-Cuis download is pinned to **7.7-7976** (`#BaseForCuis7.8`); retest master and unpin
-when Cuis publishes a rolling image containing ≥8094.
+**8093/8094**, which landed *after* the current rolling image). The in-app Cuis download
+is pinned to **7.7-7976** (`#BaseForCuis7.8`).
 
-### 4. `XDisplayControlPlugin.so` fails to `dlopen` — LOW
-Over-linked against libs not shipped (libSM/libICE/libuuid/libandroid-execinfo). Doesn't
-block anything (fullscreen works without it). Rebuild the plugin without the X-session
-libs, or ship those `.so`s, to actually load it.
+**New evidence (2026-08-13):** `CuisUniversity-8134` — update 8134, i.e. well past
+8094 — downloads and **renders perfectly** on the rebuilt VM. That is the first
+confirmation that the fix works on this platform, and it makes the blank-world
+diagnosis (upstream's startup rework, not our VM or X server) essentially settled.
+**Action:** retest a *vanilla* Cuis rolling image ≥8094 and, if it renders, unpin
+`downloadCuis` from `#BaseForCuis7.8`. Until that specific test is done the pin
+stays — Cuis University is a different image lineage, so it is strong evidence,
+not proof.
 
-### 5. Benign log noise (ignore)
+### 4. `XDisplayControlPlugin.so` fails to `dlopen` — FIXED 2026-08-12
+Was over-linked against libs not shipped (libSM/libICE/libandroid-execinfo). The NDK
+rebuild (`scripts/build-vm-android.sh`) drops all three; its `NEEDED` is now entirely
+libraries the APK ships. It never blocked anything (fullscreen works without it), but the
+root cause — a plugin linked against X-session libraries the APK does not carry — is worth
+remembering as the failure mode to check whenever a plugin refuses to `dlopen`.
+
+### 5. Image downloads: hardened 2026-08-13, two follow-ups left
+The three pre-set downloads work (each verified downloading and booting on the rebuilt
+VM). What was wrong was everything *around* the happy path — an unchecked download became
+the boot image sight-unseen, and failures were near-invisible. See the commit "Make a
+failed image download say why…". Still open:
+- **The three sources are pinned by string matching that will rot silently** — a
+  `files.squeak.org` listing regex, a GitHub tag, and a `windows64.zip` asset name. Worth
+  a scripted check in the dev loop that resolves all three and asserts a plausible image.
+- **Cuis University cannot be cancelled** and its progress bar sits at 100% during the
+  ~50 s unzip. Also the restart-after-download path has only ever been exercised on
+  API 30 (the AVD), while the app now targets 35.
+
+### 6. Benign log noise (ignore)
 `pthread_setschedparam failed` (VM can't get realtime prio — falls back to itimer) and
 `Xlib: extension "RANDR" missing` (embedded server has no RANDR).
 
