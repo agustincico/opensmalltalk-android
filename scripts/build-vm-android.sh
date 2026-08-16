@@ -15,6 +15,10 @@
 #
 set -euo pipefail
 
+# Resolve our own directory up front: the script cd's into the VM tree later, so
+# anything relative to $0 must be pinned to an absolute path before that happens.
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
 WORK="${WORK:-$HOME/osvm-android}"
 NDK_VER="${NDK_VER:-26.2.11394342}"
 SDK="${ANDROID_SDK_ROOT:-$HOME/Library/Android/sdk}"
@@ -49,7 +53,7 @@ if [ ! -f "$SR/usr/include/X11/Xlib.h" ]; then
 	         libxcb libxau libxdmcp libxft libxi libxcursor libxfixes \
 	         libglvnd libglvnd-dev mesa-dev \
 	         glib pango libcairo libpixman harfbuzz freetype fontconfig \
-	         libpng pcre2 libexpat fribidi libgraphite brotli; do
+	         libpng pcre2 libexpat fribidi libgraphite brotli libffi; do
 		fn=$(awk -v P="$p" '$1=="Package:"&&$2==P{f=1} f&&$1=="Filename:"{print $2; exit}' \
 		     "$WORK/debs/Packages")
 		[ -n "$fn" ] || { echo "missing Termux package: $p" >&2; exit 1; }
@@ -63,8 +67,10 @@ if [ ! -f "$SR/usr/include/X11/Xlib.h" ]; then
 	U="$tmp/data/data/com.termux/files/usr"
 	mkdir -p "$SR/usr"
 	cp -R "$U/include" "$U/lib" "$SR/usr/" 2>/dev/null || true
-	# .pc files hardcode Termux's on-device prefix; point them at our sysroot.
-	perl -pi -e "s{^prefix=.*}{prefix=$SR/usr}" "$SR/usr/lib/pkgconfig/"*.pc
+	# .pc files hardcode Termux's on-device prefix in prefix=, includedir= and
+	# libdir= alike, so rewrite every occurrence -- a partial rewrite hands the
+	# compiler paths that do not exist here and the plugin is silently dropped.
+	perl -pi -e "s{/data/data/com\.termux/files/usr}{$SR/usr}g" "$SR/usr/lib/pkgconfig/"*.pc
 fi
 
 # ------------------------------------------------------------- 2. VM sources
@@ -97,19 +103,88 @@ perl -pi -e 's/^#ifdef MUSL$/#if defined(MUSL) || defined(__ANDROID__)/' \
 	platforms/unix/vm/sqUnixMain.c
 #  (d) getdtablesize()/confstr() exist at no Bionic API level; login_tty lives
 #      in <utmp.h>. Shipped as a force-included header (see the file).
-cp "$(dirname "$0")/android/sqAndroidCompat.h" platforms/unix/vm/sqAndroidCompat.h
+cp "$HERE/android/sqAndroidCompat.h" platforms/unix/vm/sqAndroidCompat.h
 
 # ------------------------------------------------- 4. configure cross-compile
-# AC_REQUIRE_SIZEOF uses AC_TRY_RUN, which cannot work when cross-compiling and
-# aborts configure. Replace the run test with a compile-time static assertion.
+# AC_REQUIRE_SIZEOF uses AC_TRY_RUN with no fourth (cross-compiling) argument, so
+# autoconf emits a hard "cannot run test program while cross compiling" abort and
+# configure dies at the first size check. Patch the macro AND the corresponding
+# two blocks of the committed generated configure.
+#
+# Both edits are skipped when already applied, so this stays a no-op once the
+# upstream pull request that carries the same fix is merged.
 python3 - "$O" <<'PY'
-import re, sys, pathlib
+import sys, pathlib
+
 o = pathlib.Path(sys.argv[1])
+
+# -- the macro itself ------------------------------------------------------
+m4 = o / "platforms/unix/config/acinclude.m4"
+s = m4.read_text(errors="surrogateescape")
+old_m4 = '''  AC_TRY_RUN([#include <sys/types.h>
+\t      int main(){return(sizeof($1) == $2)?0:1;}],'''
+new_m4 = '''  AC_COMPILE_IFELSE([AC_LANG_SOURCE([[#include <sys/types.h>
+\t      int sizeof_assertion[(sizeof($1) == $2) ? 1 : -1];]])],'''
+if old_m4 in s:
+    m4.write_text(s.replace(old_m4, new_m4), errors="surrogateescape")
+    print("   acinclude.m4: AC_TRY_RUN -> AC_COMPILE_IFELSE")
+
+# -- and the generated configure -------------------------------------------
+# Replace each AC_REQUIRE_SIZEOF expansion wholesale: from the cross-compiling
+# guard that precedes the test source down to the `fi` that closes it. A textual
+# search-and-replace cannot be used here -- the surrounding lines appear many
+# times over in a generated configure, and matching only the unique ones leaves
+# the block half-converted.
 cfg = o / "platforms/unix/config/configure"
-s = cfg.read_text(errors="surrogateescape")
-s = re.sub(r'as_fn_error \$\? "cannot run test program while cross compiling"[^\n]*\n',
-           'printf "%s\\n" "okay (compile-time, cross)" >&6\n', s)
-cfg.write_text(s, errors="surrogateescape")
+L = cfg.read_text(errors="surrogateescape").splitlines(keepends=True)
+
+GUARD   = '  if test "$cross_compiling" = yes; then :\n'
+RUN_END = '  conftest.$ac_objext conftest.beam conftest.$ac_ext\n'
+
+def convert(marker, assertion):
+    """Swap one AC_REQUIRE_SIZEOF run-test for the compile-test autoconf would
+       have generated. The replacement is spelled out rather than spliced from
+       the original, because the pieces around it (`if ac_fn_c_try_run`, the
+       cleanup line) recur dozens of times in a generated configure."""
+    global L
+    hits = [k for k, l in enumerate(L) if marker in l]
+    if not hits:
+        return False
+    i = hits[0]
+    start = next(k for k in range(i, -1, -1) if L[k] == GUARD)
+    end   = next(k for k in range(i, len(L)) if L[k] == RUN_END) + 1
+    assert L[end] == 'fi\n', "unexpected end of AC_REQUIRE_SIZEOF block"
+    block = [
+        '            cat confdefs.h - <<_ACEOF >conftest.$ac_ext\n',
+        '/* end confdefs.h.  */\n',
+        '#include <sys/types.h>\n',
+        '\t      %s\n' % assertion,
+        '_ACEOF\n',
+        'if ac_fn_c_try_compile "$LINENO"; then :\n',
+        '  { $as_echo "$as_me:${as_lineno-$LINENO}: result: \\"okay\\"" >&5\n',
+        '$as_echo "\\"okay\\"" >&6; }\n',
+        'else\n',
+        '  { $as_echo "$as_me:${as_lineno-$LINENO}: result: \\"bad\\"" >&5\n',
+        '$as_echo "\\"bad\\"" >&6; }\n',
+        '    as_fn_error $? "\\"one or more basic data types has an incompatible '
+        'size: giving up\\"" "$LINENO" 5\n',
+        'fi\n',
+        'rm -f core conftest.err conftest.$ac_objext conftest.$ac_ext\n',
+    ]
+    L = L[:start] + block + L[end + 1:]
+    return True
+
+n = 0
+for marker, assertion in (
+        ('int main(){return(sizeof(int) == 4)?0:1;}',
+         'int sizeof_assertion[(sizeof(int) == 4) ? 1 : -1];'),
+        ('int main(){return(sizeof(double) == 8)?0:1;}',
+         'int sizeof_assertion[(sizeof(double) == 8) ? 1 : -1];')):
+    if convert(marker, assertion):
+        n += 1
+if n:
+    cfg.write_text(''.join(L), errors="surrogateescape")
+    print("   configure: %d AC_REQUIRE_SIZEOF block(s) made cross-safe" % n)
 PY
 
 # --------------------------------------------------------------- 5. building
@@ -122,12 +197,21 @@ rm -f config.h config.cache
 export PKG_CONFIG_LIBDIR="$SR/usr/lib/pkgconfig"
 export PKG_CONFIG_PATH="$SR/usr/lib/pkgconfig"
 
+# UnicodePlugin is guarded by PKG_CHECK_MODULES(glib-2.0 pangocairo), and under
+# cross-compilation configure ends up with an empty $PKG_CONFIG and quietly
+# disables the plugin -- passing PKG_CONFIG= on the command line is not enough.
+# Hand it the resolved flags instead, which is the escape hatch the macro
+# provides precisely for this.
+UNICODE_CFLAGS="$(pkg-config --cflags 'glib-2.0 pangocairo' 2>/dev/null || true)"
+UNICODE_LIBS="$(pkg-config --libs 'glib-2.0 pangocairo' 2>/dev/null || true)"
+
 ../../../../platforms/unix/config/configure \
 	--host=aarch64-linux-android --build="$(uname -m)-apple-darwin" \
 	--with-vmversion=5.0 --with-src=src/spur64.stack --disable-cogit \
 	--without-npsqueak --with-scriptname=spur64 \
 	--x-includes="$SR/usr/include" --x-libraries="$SR/usr/lib" \
 	PKG_CONFIG="$(command -v pkg-config)" \
+	UNICODE_PLUGIN_CFLAGS="$UNICODE_CFLAGS" UNICODE_PLUGIN_LIBS="$UNICODE_LIBS" \
 	CC="$TC/aarch64-linux-android$API-clang" \
 	AR="$TC/llvm-ar" RANLIB="$TC/llvm-ranlib" STRIP="$TC/llvm-strip" NM="$TC/llvm-nm" \
 	CFLAGS="-g -O2 -DNDEBUG -DDEBUGVM=0 -D_GNU_SOURCE -D__ARM_ARCH_ISA_A64 -DARM64 \
@@ -161,10 +245,13 @@ for so in $(find "$B" -name '*.so'); do
 done
 # vm-display-X11 additionally uses SysV shared memory, which Bionic does not
 # implement -- Termux's libandroid-shmem provides it (its <sys/shm.h> redirects
-# shmget to libandroid_shmget) -- and XRandR.
+# shmget to libandroid_shmget) -- and XRandR. libtool leaves this one under
+# <plugin>/.libs/, not next to the VM, so look it up rather than assume.
+DISPLAY_SO="$(find "$B" -name 'vm-display-X11.so' | head -1)"
+[ -n "$DISPLAY_SO" ] || { echo "vm-display-X11.so was not built" >&2; exit 1; }
 for lib in libandroid-shmem.so libXrandr.so; do
-	patchelf --print-needed "$B/vm-display-X11.so" | grep -q "^$lib$" \
-		|| patchelf --add-needed "$lib" "$B/vm-display-X11.so"
+	patchelf --print-needed "$DISPLAY_SO" | grep -q "^$lib$" \
+		|| patchelf --add-needed "$lib" "$DISPLAY_SO"
 done
 
 echo
