@@ -54,6 +54,27 @@ chooser/library, file-in/fileout plumbing, touch/zoom handling, and especially t
 `.so` blobs**. A VM repo does not host a phone app, and blobs harvested from a device
 are exactly what upstream would (rightly) reject.
 
+## Status: submitted 2026-08-16
+
+- **PR [OpenSmalltalk/opensmalltalk-vm#781](https://github.com/OpenSmalltalk/opensmalltalk-vm/pull/781)**
+  — "Android/arm64: cross-build the Stack VM with the NDK". Six commits, 11 files, against
+  `Cog` at `c687569`. Branch: `agustincico:android-arm64-cross-build`.
+- **Issue [#780](https://github.com/OpenSmalltalk/opensmalltalk-vm/issues/780)** —
+  `BitBltArm64.c` does not assemble with clang 17 on aarch64 (18 errors, all in the inline
+  assembly). Filed separately: it is upstream's bug, not part of the port.
+
+Eliot's guidance (email, 2026-08-14) splits contributions in two: Monticello on
+source.squeak.org for Smalltalk-level VMMaker work, git for everything else. **This
+contribution is entirely git-side** — every change is in `platforms/` or `building/`, and
+nothing touches the VMMaker-generated `src/`, so no VMMaker image was needed. The one
+piece that could migrate is the OSProcess shim; the PR says so and offers to move it.
+
+The Android application itself stays in this repository. It bundles a forked Java X server
+and ~60 LGPL third-party libraries whose source offer is not yet pinned, so it does not
+belong in upstream's release stream. Once `building/android64ARMv8/` is merged, upstream
+can produce an Android VM artifact through its own process — that is the path to an
+"official" Android VM, rather than shipping this APK there.
+
 ## Prerequisite before opening the PR — **done 2026-08-12**
 
 The rebuild that had to happen first is finished, so the PR now rests on evidence rather
