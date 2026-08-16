@@ -36,9 +36,14 @@ message instead of crashing).
   and a zoom picker with pixel-crisp integer scales. A soft-keyboard-aware view keeps the
   caret visible while typing.
 
+- **Open a morph's halos**: **✦** arms the next tap as a middle-click, which is what
+  raises the Morphic halo ring (move, resize, delete, inspect, debug) — otherwise
+  unreachable, since a touchscreen has no middle button.
+
 Everything lives behind a small collapsible pill (bottom-right): **☰** options,
-**⌨** keyboard, **⊙** right-click, **›** collapse. If an image ever renders blank, the
-pill is the escape hatch — ☰ → *Load image…* always works.
+**⌨** keyboard, **⊙** right-click, **✦** halos, **›** collapse. The two arming buttons
+close the pill as they arm, so the world is clear for the tap that follows. If an image
+ever renders blank, the pill is the escape hatch — ☰ → *Load image…* always works.
 
 ## How it works
 

@@ -907,28 +907,46 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         Button kbdBtn = makeIconButton("⌨");    // toggle the soft keyboard
         kbdBtn.setOnClickListener(v -> toggleKeyboard());
         Button rclickBtn = makeIconButton("⊙"); // arm the next tap as a right-click
-        rclickBtn.setOnClickListener(v -> {
-            _xServer.getScreen().armRightClick();
-            Toast.makeText(this, "Next tap = right-click (context menu)", Toast.LENGTH_SHORT).show();
-        });
-        // Collapsed by default so the menu doesn't sit over the image — only the
-        // small handle shows; tapping it slides the buttons out.
-        menuBtn.setVisibility(View.GONE);
-        kbdBtn.setVisibility(View.GONE);
-        rclickBtn.setVisibility(View.GONE);
-
+        // Halos: the Unix VM maps X button 2 to Morphic's blue button, which is the
+        // only way to raise a morph's halos — and a touchscreen has no middle button.
+        Button halosBtn = makeIconButton("✦");
         final Button handle = makeIconButton("‹");  // the minimal always-visible tab
+
+        // Collapsed by default so the bar doesn't sit over the world — only the small
+        // handle shows; tapping it slides the buttons out.
+        final Runnable applyExpanded = () -> {
+            int vis = _controlsExpanded ? View.VISIBLE : View.GONE;
+            menuBtn.setVisibility(vis);
+            kbdBtn.setVisibility(vis);
+            rclickBtn.setVisibility(vis);
+            halosBtn.setVisibility(vis);
+            handle.setText(_controlsExpanded ? "›" : "‹");
+        };
+        _controlsExpanded = false;
+        applyExpanded.run();
+
         handle.setOnClickListener(v -> {
             _controlsExpanded = !_controlsExpanded;
-            menuBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
-            kbdBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
-            rclickBtn.setVisibility(_controlsExpanded ? View.VISIBLE : View.GONE);
-            handle.setText(_controlsExpanded ? "›" : "‹");
+            applyExpanded.run();
+        });
+
+        // Both arming buttons are "press me, then touch the world", and the expanded
+        // bar covers the bottom of that world — so get out of the way immediately.
+        rclickBtn.setOnClickListener(v -> {
+            _xServer.getScreen().armRightClick();
+            _controlsExpanded = false; applyExpanded.run();
+            Toast.makeText(this, "Next tap = right-click (context menu)", Toast.LENGTH_SHORT).show();
+        });
+        halosBtn.setOnClickListener(v -> {
+            _xServer.getScreen().armMiddleClick();
+            _controlsExpanded = false; applyExpanded.run();
+            Toast.makeText(this, "Next tap = halos (middle-click)", Toast.LENGTH_SHORT).show();
         });
 
         bar.addView(menuBtn);
         bar.addView(kbdBtn);
         bar.addView(rclickBtn);
+        bar.addView(halosBtn);
         bar.addView(handle);
 
         // Bottom-right corner, out of the way of the Smalltalk world/menus.

@@ -257,6 +257,17 @@ From the README "Known limitations" plus what the loop surfaced:
    fixed (release the first finger's button-1 before sending button-3). Window
    resize/drag works (title-drag moves a window); grabbing THIN resize edges / pane
    dividers is a precision problem — use Precise-pointer / Trackpad mode.
+   **Halos (2026-08-16):** a **✦** button arms the next tap as **button 2**. On Unix the
+   VM maps X button 2 to Morphic's *blue* button, which is what raises a morph's halos —
+   the only route to them from a touchscreen. Verified on Cuis 7.7: ✦ then tapping the
+   Transcript draws the full halo ring; the arm is one-shot (the next tap is an ordinary
+   click) and ⊙ is unaffected. Both arming buttons now **collapse the pill as they arm**,
+   since the expanded bar covered the very part of the world you are about to tap.
+   Two related fixes: the long-press menu's "M-Click" item was registered under
+   `ACTION_R_CLICK`, so it sent a right-click and the button-2 branch was dead code; and
+   trackpad mode ignored the arm flags entirely, so ⊙/✦ silently produced a plain click
+   there. Press and release now also remember the SAME button (`_tapButton`) — clearing
+   the flag between down and up would otherwise leave a button stuck down in the image.
 6. **Save Image works (to filesDir).** Tested on Cuis 7.5: World menu → *Save
    Image* writes `filesDir/Cuis.image` (size/mtime change, Transcript logs
    `----SNAPSHOT----`, no permission error) and the saved state boots on relaunch.

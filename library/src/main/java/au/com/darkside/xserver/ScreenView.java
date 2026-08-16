@@ -274,6 +274,12 @@ public class ScreenView extends View {
     // Right-click: the ⊙ button arms this so the NEXT tap is a right-click (button 3),
     // an easy way to get context menus (two-finger tap also right-clicks).
     private boolean _armRightClick = false;
+    // Middle-click: the ✦ button arms the NEXT tap as button 2. On Unix the VM maps
+    // X button 2 to Morphic's "blue button", which is how you open a morph's halos —
+    // there is no other way to reach them from a touchscreen.
+    private boolean _armMiddleClick = false;
+    // Which button the in-flight tap pressed, so the release matches the press.
+    private int _tapButton = 1;
     // Smooth zoom: bilinear upscale (better for image-heavy images like Dialogo, which
     // look blocky with the default nearest-neighbour upscale). Text is crisper with
     // nearest, so it's off by default.
@@ -388,13 +394,20 @@ public class ScreenView extends View {
 
                     if (_enableTouchClicks) {
                         final int action = event.getActionMasked();
-                        // Primary finger = left button, or right button for ONE tap
-                        // after the ⊙ (right-click) button is armed.
-                        if (action == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0)
-                            updatePointerButtons(_armRightClick ? 3 : 1, true);
+                        // Primary finger = left button, unless a button was armed for
+                        // ONE tap: ⊙ → button 3 (context menu), ✦ → button 2 (halos).
+                        // Press and release must use the SAME button even if the arm
+                        // flag is cleared in between, or Smalltalk sees an unmatched
+                        // press and the world is left with a button stuck down.
+                        if (action == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0) {
+                            _tapButton = _armRightClick ? 3 : (_armMiddleClick ? 2 : 1);
+                            updatePointerButtons(_tapButton, true);
+                        }
                         if (action == MotionEvent.ACTION_UP && event.getActionIndex() == 0) {
-                            updatePointerButtons(_armRightClick ? 3 : 1, false);
+                            updatePointerButtons(_tapButton, false);
+                            _tapButton = 1;
                             _armRightClick = false;
+                            _armMiddleClick = false;
                         }
                         // Two-finger tap = right-click. Drop the first finger's left
                         // press first so Smalltalk gets a clean button-3 click (this is
@@ -448,7 +461,9 @@ public class ScreenView extends View {
                         menu.add(0, ACTION_CTRL_X, 0, "CTRL+X");
                         menu.add(0, ACTION_CTRL_A, 0, "CTRL+A");
                         menu.add(0, ACTION_ESC, 0, "ESC");
-                        menu.add(0, ACTION_R_CLICK, 0, "M-Click");
+                        // "M-Click" used to be registered under ACTION_R_CLICK, so it
+                        // fired a right-click and the button-2 branch below was dead.
+                        menu.add(0, ACTION_M_CLICK, 0, "M-Click (halos)");
                         menu.add(0, ACTION_R_CLICK, 0, "R-Click");
                         menu.add(0, ACTION_KEYBOARD, 0, "Keyboard");
                         menu.add(0, ACTION_CANCEL, 0, "Cancel");
@@ -1041,8 +1056,16 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     public boolean isPreciseTouch() { return _touchOffsetY != 0; }
     public boolean isSmoothZoom() { return _smoothZoom; }
 
-    /** Arm the next tap to be a right-click (button 3). */
-    public void armRightClick() { _armRightClick = true; }
+    /** Arm the next tap to be a right-click (button 3) — context menus. */
+    public void armRightClick() { _armRightClick = true; _armMiddleClick = false; }
+
+    /**
+     * Arm the next tap to be a middle-click (button 2). The Unix VM maps X button 2
+     * to Morphic's blue button, so this is what opens a morph's halos — the handles
+     * for move / resize / delete / inspect / debug. Mutually exclusive with the
+     * right-click arm: two armed buttons cannot both apply to one tap.
+     */
+    public void armMiddleClick() { _armMiddleClick = true; _armRightClick = false; }
 
     /** Toggle bilinear (smooth) vs nearest-neighbour (crisp) zoom upscaling. */
     public boolean toggleSmoothZoom() {
@@ -1132,8 +1155,14 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
                     updatePointerButtons(1, false);       // end the drag
                     _tpDragging = false;
                 } else if (!_tpMoved) {
-                    updatePointerButtons(1, true);        // quick tap → click at the cursor
-                    updatePointerButtons(1, false);
+                    // Quick tap → click at the cursor, honouring an armed ⊙ / ✦ the
+                    // same way direct touch does. Without this, arming a button and
+                    // then tapping in trackpad mode silently produced a plain click.
+                    int btn = _armRightClick ? 3 : (_armMiddleClick ? 2 : 1);
+                    updatePointerButtons(btn, true);
+                    updatePointerButtons(btn, false);
+                    _armRightClick = false;
+                    _armMiddleClick = false;
                 }
                 break;
         }
