@@ -221,13 +221,20 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             //  (a) crash-loop: the previous boot wrote .boot_pending and never cleared
             //      it (a healthy boot clears it a few seconds in), so it died early;
             //  (b) the image isn't a 64-bit Spur image (wrong word size).
-            if (bootPending.exists() || is32BitSpurImage(image)) {
+            // Say which of the two it was. Reporting a crash-loop as "it needs to be
+            // a 64-bit Spur image" sends people off to re-download images that were
+            // never the problem — it did exactly that when a version upgrade left
+            // stale plugins behind and the VM died on a symbol mismatch.
+            boolean wrongWordSize = is32BitSpurImage(image);
+            if (bootPending.exists() || wrongWordSize) {
                 Log.w(TAG, "previous image failed to boot (pending=" + bootPending.exists()
-                        + ", 32bit=" + is32BitSpurImage(image) + ") — back to the chooser");
+                        + ", 32bit=" + wrongWordSize + ") — back to the chooser");
                 bootPending.delete();
                 marker.delete();  // clears the loop; the chooser opens instead
-                showLoadImageDialog("The previous image couldn't start — it needs to be a "
-                        + "64-bit Spur image. Pick another.");
+                showLoadImageDialog(wrongWordSize
+                        ? "That image is 32-bit — the VM needs a 64-bit Spur image. Pick another."
+                        : "The VM stopped while starting " + image.getName() + ". If other images "
+                          + "fail too it is the app, not the image — please report it.");
                 return;
             }
 
@@ -1733,7 +1740,52 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     }
 
     
+    /**
+     * The APK version whose assets were last unpacked into filesDir, or -1.
+     *
+     * Both extractors skip files that already exist, which is right within a
+     * version and catastrophic across one: filesDir survives an upgrade, so the
+     * previous release's plugins stay put while libsqueak.so — which lives in
+     * jniLibs and is replaced by the installer — becomes the new one. The VM and
+     * its plugins are built together and share symbols, so the mismatch kills
+     * the VM at dlopen ("cannot locate symbol ..."), and every image then fails
+     * to boot. Re-extract whenever the version changes.
+     */
+    private static final String ASSET_VERSION_FILE = ".asset_version";
+
+    private int unpackedAssetVersion() {
+        File f = new File(getFilesDir(), ASSET_VERSION_FILE);
+        try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f))) {
+            return Integer.parseInt(r.readLine().trim());
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private int currentAppVersion() {
+        try {   // getLongVersionCode() is API 28+, which is our minimum
+            return (int) getPackageManager().getPackageInfo(getPackageName(), 0).getLongVersionCode();
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private void recordUnpackedAssetVersion(int version) {
+        try (FileOutputStream out = new FileOutputStream(new File(getFilesDir(), ASSET_VERSION_FILE))) {
+            out.write(String.valueOf(version).getBytes("UTF-8"));
+        } catch (Exception e) {
+            Log.w(TAG, "could not record unpacked asset version", e);
+        }
+    }
+
+    /** True when filesDir holds assets from a different release than the one running. */
+    private boolean assetsAreStale() {
+        int cur = currentAppVersion();
+        return cur < 0 || unpackedAssetVersion() != cur;
+    }
+
     private void extractPlugins() {
+        final boolean refresh = assetsAreStale();
         new Thread(() -> {
         final String assetSubDir = "plugins";
         File pluginsDir = new File(getFilesDir(), assetSubDir);
@@ -1777,8 +1829,8 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
             if (filename.isEmpty()) continue;
             
             File destFile = new File(pluginsDir, filename);
-            
-            if (destFile.exists()) {
+
+            if (destFile.exists() && !refresh) {
                 runOnUiThread(() -> appendLog("✅ Plugin ya existe: " + filename));
                 successCount++;
                 continue;
@@ -1835,6 +1887,8 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
 }
 
 private void extractAssets() {
+    final boolean refresh = assetsAreStale();
+    final int version = currentAppVersion();
     new Thread(() -> {
         try {
             String[] files = getAssets().list(""); // lista la raíz de assets
@@ -1856,7 +1910,7 @@ private void extractAssets() {
                     continue;
 
                 File destFile = new File(getFilesDir(), filename);
-                if (destFile.exists()) {
+                if (destFile.exists() && !refresh) {
                     runOnUiThread(() -> appendLog("✅ Ya existe: " + filename));
                     continue;
                 }
@@ -1874,6 +1928,10 @@ private void extractAssets() {
                     runOnUiThread(() -> appendLog("❌ Error: " + filename + " - " + e.getMessage()));
                 }
             }
+            // Stamp the version only after a refresh actually ran, so a failure
+            // part-way through is retried on the next launch rather than being
+            // recorded as done.
+            if (refresh && version > 0) recordUnpackedAssetVersion(version);
         } catch (Exception e) {
             final String error = e.getMessage();
             runOnUiThread(() -> appendLog("ERROR extractAssets: " + error));
