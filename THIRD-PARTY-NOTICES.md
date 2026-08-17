@@ -53,14 +53,71 @@ Grouped by upstream project. Licenses are the projects' usual terms — **verify
 | Termux support shims (`libandroid-shmem`, `libandroid-support`, `libandroid-execinfo`, `libandroid-posix-semaphore`) | Termux project terms |
 | LLVM libc++ (`libc++_shared.so`) | Apache-2.0 with LLVM exception |
 
-### LGPL note
+## LGPL compliance and written offer
 
-Several of the above are **LGPL**. LGPL redistribution normally requires providing the
-library's source (or a written offer) and allowing the user to relink. These libraries are
-shipped as **dynamic** `.so` files (the VM `dlopen()`s them at runtime), which is the
-relinkable arrangement LGPL contemplates — but the corresponding sources/versions are not
-currently identified here. **Before publishing this APK (e.g. to an app store), pin the
-versions and provide the source offer.**
+Several bundled libraries are under the **LGPL**, which requires that recipients can obtain
+the corresponding source and can relink the application against a modified version.
+
+**Relinking is satisfied by construction.** Every one of these libraries ships as a separate
+**dynamic** `.so` that the VM `dlopen()`s at runtime — none is statically linked into the
+VM or the application. Replacing any of them is a matter of substituting the file: unpack
+the APK, swap the `.so` under `lib/arm64-v8a/` or `assets/plugins/`, repack and re-sign.
+No part of this application has to be rebuilt to do that.
+
+### Where the binaries came from
+
+All of them were built by the **Termux** project for aarch64 and taken from a Termux
+installation. Termux builds each package from unmodified upstream releases using a build
+recipe published at
+[termux/termux-packages](https://github.com/termux/termux-packages/tree/master/packages);
+each recipe records the exact upstream version, source URL and SHA-256 it builds from, plus
+any patches applied. For every library below, the corresponding source is therefore:
+
+1. the upstream release named in the table, from that project's own distribution site, and
+2. the matching recipe directory in `termux-packages`, which carries any Termux patches.
+
+### The LGPL libraries in this APK
+
+| Library files | Project | License | Version |
+|---|---|---|---|
+| `libglib-2.0.so.0`, `libgobject-2.0.so.0`, `libgmodule-2.0.so.0`, `libgio-2.0.so.0` | [GLib](https://gitlab.gnome.org/GNOME/glib) | LGPL-2.1-or-later | 2.86.1 |
+| `libpango-1.0.so.0`, `libpangocairo-1.0.so.0`, `libpangoft2-1.0.so.0` | [Pango](https://gitlab.gnome.org/GNOME/pango) | LGPL-2.1-or-later | 1.57.0 |
+| `libcairo.so.2` | [cairo](https://gitlab.freedesktop.org/cairo/cairo) | LGPL-2.1 **or** MPL-1.1 | 1.18.4 |
+| `libfribidi.so` | [GNU FriBidi](https://github.com/fribidi/fribidi) | LGPL-2.1-or-later | see note |
+| `libgraphite2.so` | [Graphite2](https://github.com/silnrsi/graphite) | LGPL-2.1-or-later (tri-licensed MPL/LGPL/GPL) | see note |
+| `libiconv.so` | [GNU libiconv](https://www.gnu.org/software/libiconv/) | LGPL-2.1-or-later | see note |
+| `libpulse.so`, `libpulse-simple.so`, `libpulsecommon-17.0.so` | [PulseAudio](https://gitlab.freedesktop.org/pulseaudio/pulseaudio) | LGPL-2.1-or-later | 17.0 |
+| `libsndfile.so` | [libsndfile](https://github.com/libsndfile/libsndfile) | LGPL-2.1-or-later | 1.2.2 |
+| `libmp3lame.so` | [LAME](https://lame.sourceforge.io/) | LGPL-2.0-or-later | see note |
+
+Two further libraries are not LGPL but are **dual-licensed with a copyleft option**, so the
+same offer is extended to them: `libfreetype.so` ([FreeType](https://freetype.org/), FTL or
+GPL-2.0-or-later) and `libdbus-1.so` ([D-Bus](https://gitlab.freedesktop.org/dbus/dbus),
+AFL-2.1 or GPL-2.0-or-later).
+
+**Note on versions.** Where a version is given it was read from a banner inside the binary
+itself, or from the source device's Termux `pkg list-installed` — see
+[Recovered versions](#recovered-versions-read-from-the-shipped-binaries). The entries marked
+*see note* are stripped binaries whose version could not be established that way, and are
+deliberately **not** guessed here. If you need the exact source for one of those, use the
+written offer below and it will be identified from the build that produced it.
+
+### Written offer
+
+For a period of three years from the distribution of any release of this application, the
+author will provide, to anyone who asks, the complete corresponding source code for any
+LGPL (or otherwise copyleft-licensed) library bundled in it — including the exact upstream
+version and any patches applied — on a medium customarily used for software interchange, at
+no charge beyond the cost of performing the distribution. Requests: open an issue at
+<https://github.com/agustincico/opensmalltalk-android/issues>.
+
+### The durable fix
+
+This offer rests on binaries copied from a device, which is why several versions above are
+not pinned. `scripts/build-vm-android.sh` already assembles its build sysroot by downloading
+these same libraries from Termux's package repository, where every package is versioned and
+checksummed by apt. Regenerating the *shipped* copies the same way would make every version
+in this table exact and reproducible; see [docs/ROADMAP.md](docs/ROADMAP.md).
 
 ## Bundled Smalltalk images
 
@@ -106,6 +163,23 @@ see [docs/BUILDING-VM.md](docs/BUILDING-VM.md#provenance-read-from-strings-in-th
 
 ## How to help
 
-All shipped library versions are now identified (table above). What's still missing is the
-per-version **license texts** for redistribution-grade compliance — if you can contribute
-those (or spot a version we got wrong), please open a PR.
+The LGPL side is covered by the [written offer](#written-offer) above. What is still worth
+doing: pinning the four stripped libraries' versions (FriBidi, Graphite2, libiconv, LAME),
+which the [durable fix](#the-durable-fix) would settle for all of them at once, and
+collecting the per-version license texts. If you can contribute either — or you spot a
+version that is wrong — please open a PR.
+
+### Libraries that may not be needed at all
+
+A dependency audit (2026-08-16) found ~5 MB of libraries with no reachable reference from
+the VM, its plugins, or the JNI preload list: `libSDL2-2.0.so` and `libwm.so` (4.4 MB
+between them), the Wayland trio, `libxkbcommon.so`, `libICE`/`libSM`, `libXcursor`,
+`libXfixes`, `libXi`, `libXss` and `libdecor-0`. Dropping unused libraries is the cheapest
+compliance win there is, since an obligation only exists for what is actually distributed.
+
+**This is not as simple as deleting them.** A first attempt broke the boot, because the
+analysis matched on file names while the loader resolves by `SONAME`, and because Android
+only packages files from `jniLibs` whose name ends in exactly `.so` — `libz.so` carries
+`SONAME libz.so.1` and is the copy that actually ships, while the `libz.so.1` sitting next
+to it is never packaged at all. Any removal pass therefore has to resolve SONAMEs, model
+that packaging rule, and be verified on a device one library at a time.
