@@ -51,6 +51,19 @@ android {
     }
 
     buildTypes {
+        // Experimental Cog (JIT) build. Installs ALONGSIDE the normal app under its
+        // own applicationId, so a JIT that misbehaves cannot take the working
+        // install with it, and the two can be compared side by side. Optimized and
+        // release-signed so the performance it shows is the real thing.
+        jit {
+            initWith release
+            applicationIdSuffix ".jit"
+            versionNameSuffix "-jit"
+            resValue "string", "app_name", "OpenSmalltalk JIT"
+            // initWith does not carry the signing config over; set it explicitly.
+            signingConfig keystorePropsFile.exists() ? signingConfigs.release : null
+            matchingFallbacks = ['release']
+        }
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'

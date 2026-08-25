@@ -366,8 +366,29 @@ Proof it works: `/proc/<pid>/maps` shows both aliases of one memfd, `r-xs` and `
 Build with `scripts/android/build-cog-android.sh` — it differs from the Stack build only in
 `--with-src=src/spur64.cog`, dropping `--disable-cogit`, and `-DCOGMTVM=0`.
 
-**Why it is not shipped.** One image, one boot, no benchmark, and no run on a physical
-phone. Before it replaces the Stack VM: measure it against Stack on real work, exercise the
+### Measured on a physical phone (2026-08-25)
+
+`1 tinyBenchmarks` on a real Samsung device, same Cuis 7.7 image, the two builds installed
+side by side:
+
+| | Stack (shipped) | Cog JIT | |
+|---|---|---|---|
+| megaBytecodes/second | 105.79 | **457.96** | **4.33x** |
+| megaSends/second | 5.92 | **39.57** | **6.68x** |
+
+Sends are where it counts in Smalltalk, and they are nearly 7x. Note this also settles the
+smoke test I could not finish locally: the packaged `app-jit.apk` runs on real hardware, so
+the hang I saw was the worn-out emulator, not the build.
+
+Worth knowing: the research turned up **no published Cog-vs-Stack figures for ARM64 at
+all** — the widely-quoted numbers predate the ARM64 backend. So this measurement is likely
+the first of its kind, and worth passing upstream.
+
+**Why it is still not shipped.** tinyBenchmarks measures bytecode dispatch and message
+sends — not GC, not the plugins, and not the X-server-over-Java rendering path that
+actually governs how the UI feels. Before it replaces the Stack VM: check what the code
+zone costs in RAM, run a long session for stability, exercise the plugins, and confirm the
+UI is perceptibly better and not just arithmetically faster. Before it replaces the Stack VM: measure it against Stack on real work, exercise the
 plugins, and check what the code zone costs in memory. There is also an unexamined risk —
 upstream's `linux64ARMv8` Cog build uses **gcc** with a comment that the fast blitter
 "compiles-and-segfaults with clang", and clang is all we have.
