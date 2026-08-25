@@ -1,0 +1,138 @@
+# The X11-free display path (`vm-display-android`)
+
+Status: **working prototype, measured, not yet the shipping path.** The app still boots the
+embedded X server by default; the native path is a second activity you can launch side by
+side, so both can be compared on the same device with the same image.
+
+## Why
+
+Everything the image draws currently travels: image → `XPutImage` → **TCP socket to
+localhost:6000** → a **Java X-protocol parser** → an Android `Bitmap` → `View.onDraw`. That
+is three copies and a protocol round trip per frame, and it is why the Cog JIT — 4.3× the
+bytecodes, 6.7× the sends — did not feel much faster: the JIT speeds up everything *except*
+painting.
+
+`vm-display-android.so` deletes that entire chain. The VM writes the Display straight into
+the buffer behind a `SurfaceView`.
+
+## What it is
+
+An **ordinary OpenSmalltalk Unix display module** — the same kind as `vm-display-X11` and
+`vm-display-fbdev`: `SqDisplayDefine` + `SqModuleDefine`, built as `vm-display-android.so`,
+selected by putting `-vm-display-android` on the VM's command line.
+
+That matters more than it sounds: **the VM needs no change at all.** `requireModuleNamed`
+turns `-vm-display-<name>` into a `dlopen` of `vm-display-<name>.so` in the plugins
+directory, so the `libsqueak.so` already shipped in v1.45 loads this driver as-is. Verified
+by checking every symbol the module imports (`aioPoll`, `primitiveFail`, `signalSemaphoreWithIndex`,
+`uxDropFileNames`, …) against the shipped VM's dynamic symbol table.
+
+Its `NEEDED` set is `libsqueak.so`, `libandroid.so`, `liblog.so`, `libdl.so`, `libc.so` —
+all platform libraries. **No X11, no cairo, no pango, no SDL.** 67 KB.
+
+### Not the Pharo approach, and why
+
+Pharo's VM is *headless*: it has no display code, and the image draws through UFFI → libffi
+→ libSDL2. Squeak and Cuis do the opposite — the VM owns the display and the image calls
+`ioShowDisplay`. So "an SDL2 plugin like Pharo's" would mean changing the image, whereas a
+display module changes nothing above the VM. SDL2 would also have cost ~1.5 MB of library
+and forced the launcher to become an `SDLActivity` (SDL's Android backend owns the main
+thread), for the same pixels.
+
+## Measured
+
+Emulator, API 30 arm64, Cuis 7.5-7681, Cog JIT, same image and same script both ways —
+counting full-screen `Display primShowRectLeft:right:top:bottom:` calls completed in 6
+seconds, with the world already up:
+
+| | embedded X server | `vm-display-android` |
+|---|---|---|
+| world size | 1080×2063 | 1080×2195 (6% more pixels) |
+| full-screen updates in 6 s | **42** (7/s) | **230** (38/s) |
+| frames SurfaceFlinger actually presented | 1.8 fps | 38.9 fps |
+
+**~5.5× more repaints reaching the screen**, and the native figure is at the emulator's
+presentation ceiling (~22 ms per posted buffer on a software GPU), not at the driver's.
+
+> Measure with the world already up. Under X11, `display_ioShowDisplay` returns immediately
+> while `stWindow == 0`, so a benchmark run from the `-s` startup script measures an empty
+> loop — it reported 260 *million* "frames" in 6 seconds before this was noticed.
+
+## Two things learned the hard way
+
+1. **One post per damage rectangle throttles the image to one rectangle per refresh.**
+   Posting a buffer presents a frame and blocks until the compositor frees one. Damage is
+   now unioned and posted once per turn of the VM's event loop (and at the latest 16 ms
+   after the first damage, so a long draw cannot hold the screen).
+2. **A small damage rectangle costs MORE than a full-screen one** — 28 ms vs 21 ms.
+   `ANativeWindow_lock` preserves everything *outside* the dirty rectangle by copying it
+   from the previously posted buffer, so the smaller the damage, the bigger that copy. The
+   driver therefore claims the whole surface (nothing to preserve, no copy-back) and
+   repaints it itself from the Display bits it already has. Kept as the `fullRepaint`
+   switch, since the trade-off is device-dependent.
+
+Also worth knowing, from the same family of problems the Pharo port hit: Android resolves
+symbols in **one flat process-wide namespace**, so a module can interpose on libc or on the
+other display driver. `exports.map` publishes exactly `display_android` and the `sqAndroid*`
+entry points and hides the event-buffer globals the module inherits from `sqUnixEvent.c`.
+
+## Building it
+
+```bash
+OSVM=~/opensmalltalk-vm scripts/android/vm-display-android/build.sh
+cp scripts/android/vm-display-android/vm-display-android.so app/src/main/assets/plugins/
+```
+
+Seconds, not the ten minutes a VM build takes: a display module resolves the VM's symbols at
+load time, so it compiles standalone against the headers with a seven-line `config.h`. Use
+the same pinned upstream commit the VM was built from (`a4d3da0`, branch `Cog`).
+
+## Trying it
+
+```bash
+adb shell am start -n ar.com.opensmalltalk/au.com.darkside.x11server.NativeDisplayActivity
+```
+
+It boots whatever image the normal launcher last chose (`.custom_image`) and extracts the
+driver itself if the installed APK predates it.
+
+## Shape of the code
+
+| Piece | What it does |
+|---|---|
+| `scripts/android/vm-display-android/sqUnixAndroidDisplay.c` | the driver: `ANativeWindow` rendering, the event queue, clipboard, drop files |
+| `scripts/android/vm-display-android/exports.map` | seals the symbol namespace |
+| `app/src/main/cpp/squeak_jni.c` | `NativeDisplay_*` JNI entry points; caches the surface until the driver is loaded |
+| `NativeDisplay.java` | the Java side of that bridge |
+| `SqueakSurfaceView.java` | the surface, and the touch/key translation the X server used to do |
+| `NativeDisplayActivity.java` | a second entry point, so the shipping X11 path stays untouched |
+
+Threading: everything `display_*` runs on the VM thread, everything `sqAndroid*` on the
+Android UI thread. They meet in two places, each with its own mutex — the window pointer
+(so `surfaceDestroyed` cannot pull the buffer out from under a blit) and a raw event ring
+that the VM thread drains in `ioProcessEvents`, which keeps `sqUnixEvent.c`'s buffer
+single-threaded as it was designed to be. A self-pipe registered with `aio` lets a touch cut
+the VM's idle sleep short.
+
+## What is missing before it can replace X11
+
+- The floating pill (☰ options, keyboard, right-click, halos) and the image chooser, which
+  today live in `XServerActivity` and talk to `ScreenView`.
+- Zoom. The driver already accepts a **logical size** smaller than the surface, which makes
+  SurfaceFlinger scale in hardware — a zoom that has the VM draw *fewer* pixels rather than
+  more, the opposite of the current upscaler. Unwired.
+- Clipboard: the driver holds the text and calls back on writes; the JNI side is not
+  connected to `ClipboardManager` yet.
+- File-in: `sqAndroidPostDropFile` records the drop event the Cuis path expects, untested.
+- Soft-keyboard panning (keeping the caret above the IME) and trackpad / precise-pointer
+  modes.
+- Depths other than 32 bpp are refused (`ioHasDisplayDepth`), which every modern image is
+  fine with, and rotation is untested.
+
+## Upstreaming
+
+The driver is written to be contributable: no Android-only hacks in VM code, everything in
+its own `platforms/unix/vm-display-android/` shape. To offer it upstream it needs a
+`Makefile.inc` and `acinclude.m4` next to the source and an entry in `sqUnixMain.c`'s
+`moduleDescriptions` (only so it can be a *default*; explicit `-vm-display-android` already
+works without it). Upstream has no Android display module at all today.

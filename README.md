@@ -88,6 +88,9 @@ Bionic.
   observe → drive input), including Smalltalk text-tests wired into logcat.
 - [docs/BUILDING-VM.md](docs/BUILDING-VM.md) — the NDK cross-compile recipe, the four
   Bionic portability patches, and what still comes from Termux.
+- [docs/NATIVE-DISPLAY.md](docs/NATIVE-DISPLAY.md) — `vm-display-android`, the display
+  driver that renders straight into a `SurfaceView` with no X server (working prototype:
+  5.5× the repaints).
 - [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — bundled binaries and licenses.
 - [docs/ROADMAP.md](docs/ROADMAP.md) — open bugs, subtleties, UX backlog, and the
   Google Play path (cost + what modernization it needs).

@@ -307,6 +307,29 @@ From the README "Known limitations" plus what the loop surfaced:
    never open submenus; use `input motionevent` DOWN/MOVE/UP press-hold-drag.
    Modal PopUpMenus DO respond to plain taps.)
 
+## Display without the X server — `vm-display-android` (prototype works)
+
+Full write-up in [`docs/NATIVE-DISPLAY.md`](docs/NATIVE-DISPLAY.md). The short version:
+
+- It is an **ordinary Unix display module** (`SqDisplayDefine`/`SqModuleDefine`), selected
+  with `-vm-display-android`, so **the shipped `libsqueak.so` needs no rebuild** —
+  `requireModuleNamed` just `dlopen`s `vm-display-<name>.so` out of the plugins dir.
+- Builds standalone in ~1 s (`scripts/android/vm-display-android/build.sh`) against the
+  pinned upstream headers with a 7-line `config.h`; no VM build needed for a change.
+- **Measured 5.5× more repaints** than the X server (42 → 230 full-screen updates in 6 s).
+- Two non-obvious findings: posting per damage rect throttles you to one rect per refresh
+  (union the damage, post once per event-loop turn); and a SMALL damage rect costs MORE
+  than a full-screen one, because `ANativeWindow_lock` copies back everything outside the
+  dirty rect from the previous buffer — so the driver claims the whole surface and repaints
+  it itself.
+- **Benchmark with the world up.** Under X11, `ioShowDisplay` is a no-op while
+  `stWindow == 0`, so anything measured from the `-s` startup script measures nothing.
+- Not Pharo's shape: Pharo's VM is headless and the *image* drives SDL2 over UFFI; Squeak
+  and Cuis expect the VM to own the display, so a display module changes nothing above the
+  VM (and costs no SDL dependency, no `SDLActivity`).
+- Live behind `NativeDisplayActivity` (exported, launch with `am start`) so the shipping
+  X11 path is untouched. What is still missing to replace X11 is listed in the doc.
+
 ## Squeak file-in (drop into running image) — OPEN, hard
 
 Cuis file-in-on-drop works (v1.34, XdndSqueakLaunchDrop → DropFilesAction menu).

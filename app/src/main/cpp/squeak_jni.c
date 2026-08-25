@@ -8,6 +8,7 @@
 #include <stdio.h>  // Para FILE*
 #include <sys/socket.h>
 #include <sys/un.h>
+#include <android/native_window_jni.h>
 
 #define LOG(...) __android_log_print(ANDROID_LOG_ERROR, "SQUEAK", __VA_ARGS__)
 #define LOG_VM(...) __android_log_print(ANDROID_LOG_INFO, "SQUEAK_VM", __VA_ARGS__) // Log para la VM
@@ -19,6 +20,7 @@ static squeak_main_t g_squeak_main = NULL;
 static char g_image_path[512] = "";
 static char g_lib_dir[512] = "";    // Directorio de la librería nativa del APK
 static char g_files_dir[512] = ""; // Directorio de archivos de la app (/data/data/pkg/files)
+static int g_native_display = 0;   // 1 = render with vm-display-android (no X server)
 
 /*
  * Append to last_error, TRUNCATING instead of overflowing.
@@ -144,8 +146,15 @@ void* run_squeak_thread(void* arg) {
     argv[argc++] = (char*)"squeak";
     argv[argc++] = (char*)"-plugins";
     argv[argc++] = plugins_path;
-    argv[argc++] = (char*)"-display";
-    argv[argc++] = (char*)"127.0.0.1:0";
+    if (g_native_display) {
+        // Ask for our own display module. The VM resolves "-vm-display-<name>"
+        // to vm-display-<name>.so in the plugins directory, so nothing in the
+        // VM itself has to know this driver exists.
+        argv[argc++] = (char*)"-vm-display-android";
+    } else {
+        argv[argc++] = (char*)"-display";
+        argv[argc++] = (char*)"127.0.0.1:0";
+    }
     argv[argc++] = g_image_path;
     // Point Cuis's "user base directory" at the (writable, already-existing)
     // filesDir. Cuis 6.x/7.x does `UserBaseDirectory assureExistence` on startup;
@@ -177,6 +186,121 @@ void* run_squeak_thread(void* arg) {
     
     return NULL;
 }
+
+
+// ---------------------------------------------------------------------------
+// Native display (vm-display-android): the X11-free path.
+//
+// The display driver is an ordinary Unix display module, so the VM loads it
+// itself when argv says -vm-display-android. This glue only has to hand it the
+// SurfaceView's window and forward input; it talks to the module through the
+// handful of plain C entry points the module exports, resolved by name, so
+// neither side needs to know about the other at link time.
+//
+// The surface can appear before or after the VM starts, so the window is cached
+// here and flushed to the module as soon as the module is resolvable.
+// ---------------------------------------------------------------------------
+
+static void (*nd_setWindow)(void *window, int w, int h) = NULL;
+static void (*nd_setLogicalSize)(int w, int h)          = NULL;
+static void (*nd_postMouse)(int, int, int, int)         = NULL;
+static void (*nd_postKey)(int, int, int, int)           = NULL;
+static void (*nd_postWheel)(int, int)                   = NULL;
+static void (*nd_postDrop)(const char *)                = NULL;
+static void (*nd_setClipboard)(const char *)            = NULL;
+
+static ANativeWindow *g_pending_window = NULL;   // held until the module is up
+static int g_pending_w = 0, g_pending_h = 0;
+
+/* Resolve the module's API. Returns 1 once it is available. The module is
+   loaded RTLD_GLOBAL (by us at startup, or by the VM when it parses argv), so
+   RTLD_DEFAULT finds it -- dlopen(NULL) would not: inside an APK that handle is
+   app_process, which knows nothing about libraries we dlopen()ed. */
+static int nd_resolve(void) {
+    if (nd_setWindow) return 1;
+    nd_setWindow      = dlsym(RTLD_DEFAULT, "sqAndroidSetNativeWindow");
+    nd_setLogicalSize = dlsym(RTLD_DEFAULT, "sqAndroidSetLogicalSize");
+    nd_postMouse      = dlsym(RTLD_DEFAULT, "sqAndroidPostMouseEvent");
+    nd_postKey        = dlsym(RTLD_DEFAULT, "sqAndroidPostKeyEvent");
+    nd_postWheel      = dlsym(RTLD_DEFAULT, "sqAndroidPostWheelEvent");
+    nd_postDrop       = dlsym(RTLD_DEFAULT, "sqAndroidPostDropFile");
+    nd_setClipboard   = dlsym(RTLD_DEFAULT, "sqAndroidSetClipboardText");
+    if (!nd_setWindow) return 0;
+    LOG("display nativo: API del modulo resuelta");
+    if (g_pending_window) {
+        nd_setWindow(g_pending_window, g_pending_w, g_pending_h);
+        ANativeWindow_release(g_pending_window);   // the module took its own ref
+        g_pending_window = NULL;
+    }
+    return 1;
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_enable(JNIEnv *env, jclass cls, jboolean on) {
+    g_native_display = on ? 1 : 0;
+    LOG("display nativo: %s", g_native_display ? "ACTIVADO" : "desactivado");
+}
+
+JNIEXPORT jboolean JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_isReady(JNIEnv *env, jclass cls) {
+    return nd_resolve() ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_setSurface(
+        JNIEnv *env, jclass cls, jobject surface, jint w, jint h) {
+    ANativeWindow *win = surface ? ANativeWindow_fromSurface(env, surface) : NULL;
+    if (nd_resolve()) {
+        nd_setWindow(win, w, h);
+        if (win) ANativeWindow_release(win);       // the module holds its own ref
+    } else {
+        if (g_pending_window) ANativeWindow_release(g_pending_window);
+        g_pending_window = win;                    // keep the ref for the flush
+        g_pending_w = w;
+        g_pending_h = h;
+    }
+    LOG("display nativo: surface %s %dx%d", surface ? "set" : "cleared", (int)w, (int)h);
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_setLogicalSize(JNIEnv *env, jclass cls, jint w, jint h) {
+    if (nd_resolve() && nd_setLogicalSize) nd_setLogicalSize(w, h);
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_postMouse(
+        JNIEnv *env, jclass cls, jint x, jint y, jint buttons, jint modifiers) {
+    if (nd_resolve() && nd_postMouse) nd_postMouse(x, y, buttons, modifiers);
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_postKey(
+        JNIEnv *env, jclass cls, jint keyCode, jint pressCode, jint modifiers, jint ucs4) {
+    if (nd_resolve() && nd_postKey) nd_postKey(keyCode, pressCode, modifiers, ucs4);
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_postWheel(JNIEnv *env, jclass cls, jint dx, jint dy) {
+    if (nd_resolve() && nd_postWheel) nd_postWheel(dx, dy);
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_postDropFile(JNIEnv *env, jclass cls, jstring path) {
+    if (!nd_resolve() || !nd_postDrop || !path) return;
+    const char *p = (*env)->GetStringUTFChars(env, path, 0);
+    nd_postDrop(p);
+    (*env)->ReleaseStringUTFChars(env, path, p);
+}
+
+JNIEXPORT void JNICALL
+Java_au_com_darkside_x11server_NativeDisplay_setClipboard(JNIEnv *env, jclass cls, jstring text) {
+    if (!nd_resolve() || !nd_setClipboard) return;
+    if (!text) { nd_setClipboard(""); return; }
+    const char *t = (*env)->GetStringUTFChars(env, text, 0);
+    nd_setClipboard(t);
+    (*env)->ReleaseStringUTFChars(env, text, t);
+}
+
 
 JNIEXPORT jstring JNICALL
 Java_au_com_darkside_x11server_XServerActivity_getLastError(JNIEnv *env, jobject thiz) {
@@ -374,6 +498,22 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     // FIN: CARGA EXPLÍCITA DE DEPENDENCIAS
     // ----------------------------------------------------
     
+    // In native-display mode load the driver now, so the surface that the UI
+    // thread may already have created can be handed over before the VM boots.
+    if (g_native_display) {
+        char nd_path[600];
+        snprintf(nd_path, sizeof(nd_path), "%s/vm-display-android.so", plugins_path);
+        void *nd_handle = dlopen(nd_path, RTLD_NOW | RTLD_GLOBAL);
+        if (!nd_handle) {
+            snprintf(temp, sizeof(temp), "ERROR: no se pudo cargar %s: %s\n", nd_path, dlerror());
+            err_append(temp);
+            LOG("%s", temp);
+        } else {
+            LOG("display nativo: %s cargado", nd_path);
+            nd_resolve();
+        }
+    }
+
     err_append("Buscando main()...\n");
     g_squeak_main = (squeak_main_t)dlsym(vm_handle, "main");
     if (!g_squeak_main) {
@@ -420,4 +560,12 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     (*env)->ReleaseStringUTFChars(env, pluginsPath, plugins_path);
     
     return 0;
+}
+/* Same entry point, reachable from NativeDisplayActivity. Keeping it an alias
+   rather than moving the body means the shipping X11 path is untouched. */
+JNIEXPORT jint JNICALL
+Java_au_com_darkside_x11server_NativeDisplayActivity_startVMNative(
+    JNIEnv *env, jobject thiz, jstring libPath, jstring imagePath, jstring pluginsPath) {
+    return Java_au_com_darkside_x11server_XServerActivity_startVMNative(
+        env, thiz, libPath, imagePath, pluginsPath);
 }

@@ -1,0 +1,11 @@
+/* Android resolves symbols in one flat, process-wide namespace: anything this
+   module exports can interpose on libc or on the other display module. Export
+   exactly the module entry point and the API the app's JNI glue calls; keep the
+   event-buffer globals it inherits from sqUnixEvent.c private. */
+{
+  global:
+    display_android;
+    sqAndroid*;
+  local:
+    *;
+};
