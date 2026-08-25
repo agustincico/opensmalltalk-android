@@ -1781,7 +1781,13 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     /** True when filesDir holds assets from a different release than the one running. */
     private boolean assetsAreStale() {
         int cur = currentAppVersion();
-        return cur < 0 || unpackedAssetVersion() != cur;
+        int had = unpackedAssetVersion();
+        boolean stale = cur < 0 || had != cur;
+        // Logged because this decides whether the plugins match the VM, and a
+        // release build cannot be inspected with run-as when it goes wrong.
+        Log.i(TAG, "assets: unpacked=" + had + " running=" + cur
+                   + (stale ? " -> re-extracting" : " -> up to date"));
+        return stale;
     }
 
     private void extractPlugins() {

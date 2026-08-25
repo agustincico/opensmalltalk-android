@@ -47,8 +47,10 @@ ever renders blank, the pill is the escape hatch — ☰ → *Load image…* alw
 
 ## How it works
 
-- The **OpenSmalltalk Stack VM** (interpreted Spur 64-bit, prebuilt for ARM64) is loaded
-  in-process via JNI and launched against the chosen image.
+- The **OpenSmalltalk Cog VM** — the JIT, Spur 64-bit, prebuilt for ARM64 — is loaded
+  in-process via JNI and launched against the chosen image. On a real phone it runs
+  **4.3× the bytecodes and 6.7× the message sends** of the interpreter it replaced
+  (`tinyBenchmarks`, Cuis 7.7), for about 7 MB more memory.
 - The VM renders through X11 into an **embedded X server written in Java** (a fork of
   [android-xserver](https://github.com/ZhymabekRoman/android-xserver-enhanced)) that
   paints into an Android view and translates touch into X input events.
@@ -76,9 +78,11 @@ compileSdk/targetSdk 35, arm64-v8a only. A clone builds the same APK as the offi
 release; `./gradlew bundleRelease` produces the Play Store `.aab`.
 
 The native VM is committed as a prebuilt, but it is **not** a mystery binary: it is built
-from a pinned upstream commit by `scripts/build-vm-android.sh`, which cross-compiles the
-OpenSmalltalk VM and all 20 of its plugins for Android with the NDK, on your desktop —
-no phone or Termux install needed.
+from a pinned upstream commit with the NDK, on your desktop — no phone or Termux install
+needed. `scripts/build-vm-android.sh` prepares everything and builds the interpreter;
+`scripts/android/build-cog-android.sh` builds the **JIT that ships**, using
+`scripts/android/cog-jit-android.patch` to make Cog's dual-mapped code zone work on
+Bionic.
 
 - [docs/DEV-LOOP.md](docs/DEV-LOOP.md) — the emulator dev loop (build → deploy →
   observe → drive input), including Smalltalk text-tests wired into logcat.

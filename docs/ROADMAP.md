@@ -4,8 +4,8 @@ Durable backlog for **opensmalltalk-android** — what's shipped, what's broken,
 subtleties worth knowing, and the path to a Play Store release. Working notes with
 root-causes live in [`CLAUDE.md`](../CLAUDE.md); this file is the high-level plan.
 
-Last updated: 2026-08-25, **v1.44**. Latest finding: the Cog JIT **does** run on Android —
-see the JIT section at the end. Shipped VM is still the interpreted Stack build.
+Last updated: 2026-08-25, **v1.45** — the shipped VM is now the **Cog JIT**
+(4.3x bytecodes / 6.7x sends vs the interpreter it replaced).
 
 ---
 
@@ -317,7 +317,7 @@ THIRD-PARTY-NOTICES (see Reproducibility), since publishing widens redistributio
 
 ---
 
-## JIT (Cog) on Android — it works; not shipped yet
+## JIT (Cog) on Android — SHIPPED in v1.45
 
 **The long-standing claim in this repo — "a JIT needs W^X memory that Android does not
 grant" — is wrong**, and upstream already knew: `platforms/unix/vm/codeZoneControlARM64.h`
@@ -384,11 +384,18 @@ Worth knowing: the research turned up **no published Cog-vs-Stack figures for AR
 all** — the widely-quoted numbers predate the ARM64 backend. So this measurement is likely
 the first of its kind, and worth passing upstream.
 
-**Why it is still not shipped.** tinyBenchmarks measures bytecode dispatch and message
-sends — not GC, not the plugins, and not the X-server-over-Java rendering path that
-actually governs how the UI feels. Before it replaces the Stack VM: check what the code
-zone costs in RAM, run a long session for stability, exercise the plugins, and confirm the
-UI is perceptibly better and not just arithmetically faster. Before it replaces the Stack VM: measure it against Stack on real work, exercise the
+**Shipped in v1.45**, after the checks that were outstanding:
+
+- **Memory:** +7.7 MB PSS / +6.6 MB RSS over the Stack VM (111→119 MB PSS) with Cuis 7.7
+  loaded. The code zone is cheap.
+- **Upgrade path:** 1.44 (Stack) → 1.45 (JIT) in place re-extracts the plugins
+  (`assets: unpacked=44 running=45 -> re-extracting`, 0 skipped) and boots healthy. This
+  matters because the VM and its plugins share symbols — it is exactly what broke 1.43.
+- **Function:** world menu, halos, the pill; no crashes.
+
+**The UI does not feel faster**, and that is expected: rendering goes through the Java X
+server, so the JIT's win shows up in everything *except* painting. The honest summary is
+that computation got several times faster and drawing did not change. Before it replaces the Stack VM: measure it against Stack on real work, exercise the
 plugins, and check what the code zone costs in memory. There is also an unexamined risk —
 upstream's `linux64ARMv8` Cog build uses **gcc** with a comment that the fast blitter
 "compiles-and-segfaults with clang", and clang is all we have.

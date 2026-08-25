@@ -117,8 +117,12 @@ item in `CLAUDE.md`'s backlog). Its `NEEDED` set is now entirely libraries the A
 If you add or rename a plugin, update the `deps_to_load[]` list in
 `app/src/main/cpp/squeak_jni.c` — it preloads them explicitly, in dependency order.
 
-> The VM must stay an **interpreted Stack** build (`--disable-cogit`). A JIT (Cog) build
-> needs W^X memory that Android does not grant.
+> **Since v1.45 the shipped VM is the Cog JIT**, not the interpreter. Android does grant
+> the memory a JIT needs — upstream's own `codeZoneControlARM64.h` says so. Build it with
+> `scripts/android/build-cog-android.sh` after applying
+> `scripts/android/cog-jit-android.patch`; that patch is what makes the dual-mapped code
+> zone work on Bionic, and it matters — upstream's plain-RWX path faults on 16 KB pages.
+> See the JIT section of [ROADMAP.md](ROADMAP.md) for the measurements.
 
 ## Not reproducible today (the honest gaps)
 
