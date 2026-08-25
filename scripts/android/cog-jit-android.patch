@@ -1,0 +1,81 @@
+Make the Cog JIT's dual-mapped code zone work on Android/Bionic.
+
+Applies to platforms/unix/vm/sqUnixSpurMemory.c (opensmalltalk-vm, branch Cog).
+Two independent Bionic problems, both inside memory_alias_map() and its caller.
+
+1. Bionic implements no POSIX shared memory: there is no shm_open and no
+   shm_unlink at any API level, so the file the code zone is aliased through
+   cannot be created the way it is on Linux. memfd_create gives exactly the same
+   thing -- an anonymous file that can be mapped more than once -- and needs no
+   name in a filesystem, so there is nothing to unlink either. It is reached
+   through syscall() because Bionic only declares it from API 30, while the
+   kernel has had it since 3.17, far below any Android this VM runs on.
+
+2. Android refuses to ADD PROT_EXEC to an existing file-backed shared mapping:
+   mprotect(codeZone, size, PROT_READ|PROT_EXEC) fails with EACCES. It will,
+   however, create such a mapping if PROT_EXEC is requested at mmap() time. So
+   the executable alias (mapping 0 -- mapping 1 is the writable one the caller
+   reaches through codeToDataDelta) asks for its permissions up front, and the
+   now-redundant mprotect is skipped on Android.
+
+Verified: Cuis 7.7 boots and renders on Android 15 (API 35, 16 KB pages) with
+both aliases of the same memfd present in /proc/<pid>/maps, one r-xs and one
+rw-s. Nothing here is conditional on page size.
+
+--- a/platforms/unix/vm/sqUnixSpurMemory.c
++++ b/platforms/unix/vm/sqUnixSpurMemory.c
+@@
+ #include <errno.h>
++#if defined(__ANDROID__)
++# include <sys/syscall.h>   /* __NR_memfd_create; see memory_alias_map below */
++#endif
+@@ memory_alias_map
+ extern char  *exeName;
++#if defined(__ANDROID__)
++	/* Bionic implements no POSIX shared memory: there is no shm_open and no
++	 * shm_unlink at any API level.  memfd_create gives exactly what this needs
++	 * -- an anonymous file that can be mapped more than once -- and needs no
++	 * name in a filesystem, so there is nothing to unlink either.  Called
++	 * through syscall() because Bionic only declares it from API 30, while the
++	 * kernel has had it since 3.17 (well below any Android this VM runs on). */
++	int fd = syscall(__NR_memfd_create, "cog-code-zone", 0);
++	if (fd == -1) {
++		perror("memory_alias_map: memfd_create");
++		exit(0666);
++	}
++#else
+ 	char path[128];
+ 	snprintf(path, sizeof(path), "/%s(%lu,%p)",
+ 			 exeName ? exeName : __FUNCTION__, (long)getpid(), addrs);
+ 	int fd = shm_open(path, O_RDWR | O_CREAT | O_EXCL, 0600);
+ 	if (fd == -1) {
+ 		perror("memory_alias_map: shm_open");
+ 		exit(0666);
+ 	}
+ 	shm_unlink(path);
++#endif
+ 	ftruncate(fd, size);
+ 	for (int i = 0; i < naddr; i++) {
+-		addrs[i] = mmap(addrs[i], size, PROT_READ | PROT_WRITE,
++		/* Android refuses to ADD PROT_EXEC to an existing file-backed shared
++		 * mapping -- mprotect(...,PROT_READ|PROT_EXEC) returns EACCES -- but it
++		 * will happily create one that is executable from the outset.  Since
++		 * mapping 0 is the one that gets executed (mapping 1 is the writable
++		 * alias, see codeToDataDelta in the caller), request its permissions
++		 * here and skip the mprotect below. */
++		int prot = PROT_READ | PROT_WRITE;
++#if defined(__ANDROID__)
++		if (i == 0) prot = PROT_READ | PROT_EXEC;
++#endif
++		addrs[i] = mmap(addrs[i], size, prot,
+ 						addrs[i] ? MAP_FIXED | MAP_SHARED : MAP_SHARED,
+ 						fd, 0);
+@@ sqMakeMemoryExecutableFromToCodeToDataDelta
++#if !defined(__ANDROID__)
++	/* On Android the executable alias was mapped PROT_READ|PROT_EXEC directly
++	 * in memory_alias_map; mprotect would be denied here. */
+ 	if (mprotect((void *)firstPage,
+ 				 size,
+ 				 PROT_READ | PROT_EXEC) < 0)
+ 		perror("mprotect(x,y,PROT_READ | PROT_EXEC)");
++#endif

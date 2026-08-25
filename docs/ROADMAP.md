@@ -4,8 +4,8 @@ Durable backlog for **opensmalltalk-android** — what's shipped, what's broken,
 subtleties worth knowing, and the path to a Play Store release. Working notes with
 root-causes live in [`CLAUDE.md`](../CLAUDE.md); this file is the high-level plan.
 
-Last updated: 2026-08-13, **v1.43** — VM + all plugins now cross-compiled from pinned
-upstream sources with the NDK (minSdk 22 → 28), and the image-download path hardened.
+Last updated: 2026-08-25, **v1.44**. Latest finding: the Cog JIT **does** run on Android —
+see the JIT section at the end. Shipped VM is still the interpreted Stack build.
 
 ---
 
@@ -314,3 +314,38 @@ THIRD-PARTY-NOTICES (see Reproducibility), since publishing widens redistributio
 3. Read `CLAUDE.md` for deep working notes and the Squeak-file-in analysis.
 4. The maintainer grabs the debug APK locally from
    `app/build/outputs/apk/debug/app-debug.apk`; releases are cut from `main`.
+
+---
+
+## JIT (Cog) on Android — it works; not shipped yet
+
+**The long-standing claim in this repo — "a JIT needs W^X memory that Android does not
+grant" — is wrong.** Measured 2026-08-25 on Android 15 (API 35, 16 KB pages), inside the
+app's own uid and SELinux domain, all three ways of getting executable memory work:
+anonymous `mmap` with `PROT_WRITE|PROT_EXEC`, writing then `mprotect`-ing to executable,
+and the `memfd` dual mapping that Cog itself uses.
+
+A Cog VM **built, booted and rendered Cuis 7.7** on that device. `/proc/<pid>/maps` shows
+both aliases of one memfd, `r-xs` and `rw-s`, which is the dual-mapped code zone working
+as designed.
+
+Two Bionic problems had to be fixed to get there, neither of them about execute
+permissions — see `scripts/android/cog-jit-android.patch`:
+
+1. `memory_alias_map()` creates the aliased file with `shm_open`, and **Bionic implements
+   no POSIX shared memory at any API level**. `memfd_create` is the drop-in replacement.
+2. Android **refuses to add `PROT_EXEC` to an existing file-backed shared mapping**
+   (`mprotect` → `EACCES`) but will create one executable from the outset. So the
+   executable alias asks for its permissions at `mmap` time and the `mprotect` is skipped.
+
+Build it with `scripts/android/build-cog-android.sh`; it differs from the Stack build only
+in `--with-src=src/spur64.cog`, dropping `--disable-cogit`, and `-DCOGMTVM=0`.
+
+**Why it is not shipped.** One image, one boot, on one emulator, with no benchmark. Before
+it replaces the Stack VM: measure it against Stack on real work, run it on a physical
+phone, exercise the plugins, and check what the code zone does to memory footprint. There
+is also an unexamined risk — upstream's own `linux64ARMv8` Cog build uses **gcc** with a
+comment that the fast blitter "compiles-and-segfaults with clang", and we only have clang.
+
+The two patches are candidates for a second upstream PR, independent of the Android build
+target already proposed in #781.
