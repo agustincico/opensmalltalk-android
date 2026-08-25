@@ -22,6 +22,24 @@ Verified: Cuis 7.7 boots and renders on Android 15 (API 35, 16 KB pages) with
 both aliases of the same memfd present in /proc/<pid>/maps, one r-xs and one
 rw-s. Nothing here is conditional on page size.
 
+
+WHY THE DUAL-MAPPED SCHEME AND NOT PLAIN RWX
+--------------------------------------------
+codeZoneControlARM64.h in this tree prescribes plain RWX for Android ("Android
+allows the use of PROT_READ | PROT_WRITE | PROT_EXEC so nothing need be done"),
+which would need no patch at all. Measured, that path is page-size dependent:
+
+  DUAL_MAPPED_CODE_ZONE=0 (plain RWX)   4 KB pages: boots and renders
+                                        16 KB pages: SIGSEGV inside JIT-compiled
+                                        code, in SystemDictionary>>scanFor:
+                                        during startup
+  DUAL_MAPPED_CODE_ZONE=1 + this patch  16 KB pages: boots and renders
+
+Same binary, same image, same emulator family; only the page size differs. Since
+Google now requires 16 KB-page support, the scheme upstream documents for Android
+is the one that fails on the devices Play is pushing towards. That is worth an
+upstream issue of its own; this patch is the route that works there.
+
 --- a/platforms/unix/vm/sqUnixSpurMemory.c
 +++ b/platforms/unix/vm/sqUnixSpurMemory.c
 @@

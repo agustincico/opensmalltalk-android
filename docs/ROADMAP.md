@@ -320,32 +320,54 @@ THIRD-PARTY-NOTICES (see Reproducibility), since publishing widens redistributio
 ## JIT (Cog) on Android — it works; not shipped yet
 
 **The long-standing claim in this repo — "a JIT needs W^X memory that Android does not
-grant" — is wrong.** Measured 2026-08-25 on Android 15 (API 35, 16 KB pages), inside the
-app's own uid and SELinux domain, all three ways of getting executable memory work:
-anonymous `mmap` with `PROT_WRITE|PROT_EXEC`, writing then `mprotect`-ing to executable,
-and the `memfd` dual mapping that Cog itself uses.
+grant" — is wrong**, and upstream already knew: `platforms/unix/vm/codeZoneControlARM64.h`
+reads *"Android allows the use of PROT_READ | PROT_WRITE | PROT_EXEC so nothing need be
+done"*. AOSP's SELinux policy grants every app domain `execmem`, commented *"WebView and
+other application-specific JIT compilers"*, unchanged from API 28 through Android 16.
+Measured inside the app's own uid and SELinux domain: anonymous RWX `mmap`,
+write-then-`mprotect`, and the `memfd` dual mapping all work. (`execstack` and `execheap`
+are neverallowed for every domain, so a code zone must be anonymous `mmap` — never the
+thread stack or the brk heap. Cog already does the allowed thing.)
 
-A Cog VM **built, booted and rendered Cuis 7.7** on that device. `/proc/<pid>/maps` shows
-both aliases of one memfd, `r-xs` and `rw-s`, which is the dual-mapped code zone working
-as designed.
+Prior art exists: upstream issue #761 is a Cog VM running on a Meta Quest 3 (ARMv8).
+Eliot's historical "no JIT on mobile" remarks were about **iOS**, with Android explicitly
+contrasted as not having that problem.
 
-Two Bionic problems had to be fixed to get there, neither of them about execute
-permissions — see `scripts/android/cog-jit-android.patch`:
+### The interesting part: the two code-zone schemes do not behave the same
 
-1. `memory_alias_map()` creates the aliased file with `shm_open`, and **Bionic implements
-   no POSIX shared memory at any API level**. `memfd_create` is the drop-in replacement.
+| Code zone | 4 KB pages (Android 11) | 16 KB pages (Android 15) |
+|---|---|---|
+| `DUAL_MAPPED_CODE_ZONE=0` — plain RWX, what upstream prescribes for Android | boots, renders | **crashes in JIT-compiled code** |
+| `DUAL_MAPPED_CODE_ZONE=1` + our memfd patch | not tested | **boots, renders** |
+
+The RWX crash is a SIGSEGV inside machine-code frames (`M` in the VM's own stack dump),
+in `SystemDictionary>>scanFor:` during startup — i.e. the JIT generated code and executing
+it faulted. Same binary, same image, same emulator family; only the page size differs.
+
+So **`codeZoneControlARM64.h`'s Android branch appears to be 4 KB-only**. That matters
+beyond this project: Google now requires 16 KB-page support, so the path upstream
+documents for Android is the one that breaks on the devices Play is pushing everyone
+towards. Worth reporting upstream as its own issue, with the dual-mapped route as the fix.
+
+### Our patches
+
+`scripts/android/cog-jit-android.patch` makes the dual-mapped scheme work on Bionic —
+neither fix is about execute permissions:
+
+1. `memory_alias_map()` creates its aliased file with `shm_open`, and **Bionic implements
+   no POSIX shared memory at any API level**. `memfd_create` is the drop-in replacement
+   (via `syscall()`; Bionic only declares it from API 30, the kernel has had it since 3.17).
 2. Android **refuses to add `PROT_EXEC` to an existing file-backed shared mapping**
-   (`mprotect` → `EACCES`) but will create one executable from the outset. So the
-   executable alias asks for its permissions at `mmap` time and the `mprotect` is skipped.
+   (`mprotect` → `EACCES`) but will create one executable from the outset. The executable
+   alias now asks for its permissions at `mmap` time and the `mprotect` is skipped.
 
-Build it with `scripts/android/build-cog-android.sh`; it differs from the Stack build only
-in `--with-src=src/spur64.cog`, dropping `--disable-cogit`, and `-DCOGMTVM=0`.
+Proof it works: `/proc/<pid>/maps` shows both aliases of one memfd, `r-xs` and `rw-s`.
 
-**Why it is not shipped.** One image, one boot, on one emulator, with no benchmark. Before
-it replaces the Stack VM: measure it against Stack on real work, run it on a physical
-phone, exercise the plugins, and check what the code zone does to memory footprint. There
-is also an unexamined risk — upstream's own `linux64ARMv8` Cog build uses **gcc** with a
-comment that the fast blitter "compiles-and-segfaults with clang", and we only have clang.
+Build with `scripts/android/build-cog-android.sh` — it differs from the Stack build only in
+`--with-src=src/spur64.cog`, dropping `--disable-cogit`, and `-DCOGMTVM=0`.
 
-The two patches are candidates for a second upstream PR, independent of the Android build
-target already proposed in #781.
+**Why it is not shipped.** One image, one boot, no benchmark, and no run on a physical
+phone. Before it replaces the Stack VM: measure it against Stack on real work, exercise the
+plugins, and check what the code zone costs in memory. There is also an unexamined risk —
+upstream's `linux64ARMv8` Cog build uses **gcc** with a comment that the fast blitter
+"compiles-and-segfaults with clang", and clang is all we have.
