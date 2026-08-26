@@ -361,6 +361,12 @@ display_ioScreenSize(void)
     int sws = getSavedWindowSize();
     return sws ? sws : ((640 << 16) | 480);
   }
+  {  /* What the image is told the screen is; logged once per change. This is how
+        a zoom is confirmed to have reached the image rather than just the buffer. */
+    static int lastW = 0, lastH = 0;
+    if (w != lastW || h != lastH) { lastW = w; lastH = h;
+      LOGI("android display: ioScreenSize -> %dx%d", w, h); }
+  }
   return (w << 16) | (h & 0xFFFF);
 }
 
@@ -456,6 +462,15 @@ display_ioShowDisplay(sqInt dispBitsIndex, sqInt width, sqInt height, sqInt dept
   const uint32_t *bits = (const uint32_t *)pointerForOop(dispBitsIndex);
   int l, r, t, b;
 
+  {  /* And what it actually hands back: the two agreeing means the image relaid
+        out; disagreeing means the compositor is scaling a stale Display. */
+    static sqInt lastW = 0, lastH = 0, lastD = 0;
+    if (width != lastW || height != lastH || depth != lastD) {
+      lastW = width; lastH = height; lastD = depth;
+      LOGI("android display: image Display is %ldx%ld depth %ld",
+           (long)width, (long)height, (long)depth);
+    }
+  }
   if (width < 1 || height < 1 || depth != 32 || !bits)
     return 0;
 

@@ -114,18 +114,55 @@ that the VM thread drains in `ioProcessEvents`, which keeps `sqUnixEvent.c`'s bu
 single-threaded as it was designed to be. A self-pipe registered with `aio` lets a touch cut
 the VM's idle sleep short.
 
-## What is missing before it can replace X11
+## Using it
 
-- The floating pill (☰ options, keyboard, right-click, halos) and the image chooser, which
-  today live in `XServerActivity` and talk to `ScreenView`.
-- Zoom. The driver already accepts a **logical size** smaller than the surface, which makes
-  SurfaceFlinger scale in hardware — a zoom that has the VM draw *fewer* pixels rather than
-  more, the opposite of the current upscaler. Unwired.
-- Clipboard: the driver holds the text and calls back on writes; the JNI side is not
-  connected to `ClipboardManager` yet.
-- File-in: `sqAndroidPostDropFile` records the drop event the Cuis path expects, untested.
-- Soft-keyboard panning (keeping the caret above the IME) and trackpad / precise-pointer
-  modes.
+☰ → **Display engine** switches between the two and restarts (the VM binds to a display
+driver through its argv, so it cannot change in a running image). The choice is a marker
+file in filesDir, so it survives the restart; `NativeDisplayActivity` forces the native one
+for a shell launch:
+
+```bash
+adb shell am start -n ar.com.opensmalltalk/au.com.darkside.x11server.NativeDisplayActivity
+```
+
+Both backends are two modes of the same activity, so the pill, the image chooser, the
+crash-loop guard, the fileout watcher and the file-in picker are shared rather than copied.
+What differs is declared, not assumed: `SmalltalkDisplay.supports()` decides which rows the
+options dialog shows.
+
+| Menu item | Native path |
+|---|---|
+| Load image…, File in code, Screen orientation, Zoom | work |
+| Precise pointer, Shared clipboard | work |
+| Smooth zoom | **hidden** — nothing to toggle: the X path filters a `Canvas` blit, here the scaling is SurfaceFlinger's and the image re-lays-out instead of being interpolated |
+| Trackpad mode, Mouse pointer, Long-press menu | **hidden** — not ported yet (below) |
+
+Verified on the emulator with Cuis 7.5: the world draws and responds to touch, ⊙ opens the
+World menu, ✦ raises a morph's halos, ⌨ brings up the keyboard and typing reaches the image,
+and Zoom 2× genuinely re-lays-out the world (the driver logs `ioScreenSize -> 540x1032` and
+then `image Display is 540x1032`, which is how you tell a real resize from the compositor
+merely magnifying a stale Display).
+
+### The button numbers, since the names mislead
+
+The Unix VM maps X buttons 1/2/3 onto Squeak's red/yellow/blue bits in that order (`rybMap`,
+sqUnixX11.c), and the X path sends **button 3 for the context menu** and **button 2 for
+halos**. So on this backend menu = the *blue* bit (1) and halos = the *yellow* bit (2) —
+the opposite of what the colour names suggest. Reproducing those exact bits is what makes
+the two backends behave identically.
+
+## What is still missing
+
+- **Trackpad mode** — `ScreenView.handleTrackpadTouch` is pure MotionEvent maths; its two
+  sinks become `NativeDisplay.postMouse`. Must honour the ⊙/✦ arm flags there too, or those
+  buttons silently degrade in trackpad mode (a bug the X path had).
+- **The pointer arrow** — cannot be copied: a `SurfaceView`'s content is the VM's buffer and
+  its own `onDraw` does not composite over it, so it needs a sibling overlay view. The
+  driver draws no cursor either (`ioSetCursorWithMask` is a stub), so there is currently no
+  visible pointer at all on this path. The app knows the position — it posts every event.
+- **Long-press menu** — the gate is trivial, but every item is X synthesis today.
+- **IME panning** — `caretY()` answers -1, so the keyboard simply overlays rather than
+  lifting the caret. It becomes real once the pointer overlay tracks a position.
 - Depths other than 32 bpp are refused (`ioHasDisplayDepth`), which every modern image is
   fine with, and rotation is untested.
 

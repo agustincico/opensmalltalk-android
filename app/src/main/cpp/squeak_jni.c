@@ -21,6 +21,7 @@ static char g_image_path[512] = "";
 static char g_lib_dir[512] = "";    // Directorio de la librería nativa del APK
 static char g_files_dir[512] = ""; // Directorio de archivos de la app (/data/data/pkg/files)
 static int g_native_display = 0;   // 1 = render with vm-display-android (no X server)
+static JavaVM *g_jvm = NULL;       // for calling back into Java from the VM thread
 
 /*
  * Append to last_error, TRUNCATING instead of overflowing.
@@ -212,6 +213,33 @@ static void (*nd_setClipboard)(const char *)            = NULL;
 static ANativeWindow *g_pending_window = NULL;   // held until the module is up
 static int g_pending_w = 0, g_pending_h = 0;
 
+/* The driver calls this from the VM THREAD when the image writes the clipboard,
+   so the thread has to be attached to the JVM before touching JNI. */
+static void nd_clipboard_written(const char *utf8) {
+    JNIEnv *env = NULL;
+    int attached = 0;
+    if (!g_jvm || !utf8) return;
+    if ((*g_jvm)->GetEnv(g_jvm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+        if ((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) return;
+        attached = 1;
+    }
+    jclass cls = (*env)->FindClass(env, "au/com/darkside/x11server/NativeDisplay");
+    if (cls) {
+        jmethodID mid = (*env)->GetStaticMethodID(env, cls, "onImageWroteClipboard",
+                                                  "(Ljava/lang/String;)V");
+        if (mid) {
+            jstring js = (*env)->NewStringUTF(env, utf8);
+            if (js) {
+                (*env)->CallStaticVoidMethod(env, cls, mid, js);
+                (*env)->DeleteLocalRef(env, js);
+            }
+        }
+        (*env)->DeleteLocalRef(env, cls);
+    }
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (attached) (*g_jvm)->DetachCurrentThread(g_jvm);
+}
+
 /* Resolve the module's API. Returns 1 once it is available. The module is
    loaded RTLD_GLOBAL (by us at startup, or by the VM when it parses argv), so
    RTLD_DEFAULT finds it -- dlopen(NULL) would not: inside an APK that handle is
@@ -227,6 +255,11 @@ static int nd_resolve(void) {
     nd_setClipboard   = dlsym(RTLD_DEFAULT, "sqAndroidSetClipboardText");
     if (!nd_setWindow) return 0;
     LOG("display nativo: API del modulo resuelta");
+    {
+        void (*setWriter)(void (*)(const char *)) =
+            dlsym(RTLD_DEFAULT, "sqAndroidSetClipboardWriter");
+        if (setWriter) setWriter(nd_clipboard_written);
+    }
     if (g_pending_window) {
         nd_setWindow(g_pending_window, g_pending_w, g_pending_h);
         ANativeWindow_release(g_pending_window);   // the module took its own ref
@@ -568,4 +601,9 @@ Java_au_com_darkside_x11server_NativeDisplayActivity_startVMNative(
     JNIEnv *env, jobject thiz, jstring libPath, jstring imagePath, jstring pluginsPath) {
     return Java_au_com_darkside_x11server_XServerActivity_startVMNative(
         env, thiz, libPath, imagePath, pluginsPath);
+}
+
+JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    g_jvm = vm;
+    return JNI_VERSION_1_6;
 }

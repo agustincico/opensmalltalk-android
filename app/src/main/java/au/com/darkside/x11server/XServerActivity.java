@@ -106,8 +106,24 @@ public class XServerActivity extends Activity {
 
     private static final String TAG = "Cuis";
 
-    private XServer _xServer;
-    private ScreenView _screenView;
+    /**
+     * Which display backend to boot. A marker file rather than a build flag so the choice
+     * survives the process restart that switching it requires — the VM binds to a display
+     * driver in its argv and cannot change it while running. {@link NativeDisplayActivity}
+     * overrides this to force the native one.
+     */
+    static final String NATIVE_DISPLAY_MARKER = ".native_display";
+
+    protected boolean useNativeDisplay() {
+        return new File(getFilesDir(), NATIVE_DISPLAY_MARKER).exists();
+    }
+
+    private XServer _xServer;          // null when the native display is in use
+    private ScreenView _screenView;    // ditto — X-mode only; use _display instead
+    /** The display backend, whichever it is. Everything above this line should use it. */
+    private SmalltalkDisplay _display;
+    private boolean _nativeDisplay;    // true = vm-display-android, no X server at all
+    private volatile boolean _vmStarted;
     private boolean _controlsExpanded = false;  // floating menu drawer state
     private WakeLock _wakeLock;
 
@@ -185,122 +201,48 @@ public class XServerActivity extends Activity {
         _port = port;
         if (_port != DEFAULT_PORT) _portDescription = PORT_DESC_PRE + _port;
 
-        _xServer = new XServer(this, port, null);
+        _nativeDisplay = useNativeDisplay();
+        Log.i(TAG, "display backend: " + (_nativeDisplay ? "vm-display-android (no X server)"
+                                                         : "embedded X server"));
 
-        // execute binary on start (if there was any packed into the assets folder)
-_xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
-    @Override
-    public void onStart() {
-        Log.i(TAG, "XServer iniciado, preparando VM Smalltalk");
+        // The native display has no X server at all: no socket, no protocol, no port.
+        if (!_nativeDisplay) {
+            _xServer = new XServer(this, port, null);
 
-        // Delay corto para asegurar que DISPLAY esté listo
-        _screenView.postDelayed(() -> {
-            File filesDir = getFilesDir();
-            File marker = new File(filesDir, ".custom_image");
-            // Nothing chosen yet? Don't auto-boot the bundled image — show the
-            // "Load image" chooser (download Squeak/Cuis, or browse the device).
-            if (!marker.exists()) {
-                showLoadImageDialog();
-                return;
-            }
+            // execute binary on start (if there was any packed into the assets folder)
+            _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
+                @Override
+                public void onStart() {
+                    Log.i(TAG, "XServer iniciado, preparando VM Smalltalk");
 
-            File image = new File(filesDir, currentImageName());
-            File bootPending = new File(filesDir, ".boot_pending");
-
-            if (!image.isFile()) {
-                Log.w(TAG, "chosen image " + image.getName() + " is gone — back to the chooser");
-                marker.delete();
-                bootPending.delete();  // a stale one must not condemn the NEXT choice
-                showLoadImageDialog("That image is no longer on the device. Pick another.");
-                return;
-            }
-
-            // Don't brick the app on an image that can't boot (a 32-bit image, say,
-            // makes the 64-bit VM abort the whole process → the app "dies" and, since
-            // the marker + bad image persist, keeps dying every launch). Two guards:
-            //  (a) crash-loop: the previous boot wrote .boot_pending and never cleared
-            //      it (a healthy boot clears it a few seconds in), so it died early;
-            //  (b) the image isn't a 64-bit Spur image (wrong word size).
-            // Say which of the two it was. Reporting a crash-loop as "it needs to be
-            // a 64-bit Spur image" sends people off to re-download images that were
-            // never the problem — it did exactly that when a version upgrade left
-            // stale plugins behind and the VM died on a symbol mismatch.
-            boolean wrongWordSize = is32BitSpurImage(image);
-            if (bootPending.exists() || wrongWordSize) {
-                Log.w(TAG, "previous image failed to boot (pending=" + bootPending.exists()
-                        + ", 32bit=" + wrongWordSize + ") — back to the chooser");
-                bootPending.delete();
-                marker.delete();  // clears the loop; the chooser opens instead
-                showLoadImageDialog(wrongWordSize
-                        ? "That image is 32-bit — the VM needs a 64-bit Spur image. Pick another."
-                        : "The VM stopped while starting " + image.getName() + ". If other images "
-                          + "fail too it is the app, not the image — please report it.");
-                return;
-            }
-
-            try {
-                String libPath = getApplicationInfo().nativeLibraryDir + "/libsqueak.so";
-                String imagePath = image.getAbsolutePath();
-                String pluginsPath = filesDir.getAbsolutePath() + "/plugins";
-
-                Log.i(TAG, "Lanzando VM");
-                Log.i(TAG, "libPath=" + libPath);
-                Log.i(TAG, "imagePath=" + imagePath);
-                Log.i(TAG, "pluginsPath=" + pluginsPath);
-
-                // Drop any trailing "lost changes" (a dangling ----STARTUP---- that
-                // Cuis wrote last boot and Android killed before a clean quit) so the
-                // image doesn't pop the "Last changes may have been lost" dialog.
-                pruneChangesFile();
-
-                // Fresh per-boot image adaptation script (fileout-to-Downloads patch,
-                // author-initials preseed, script chaining) — see writeAndroidSetupScript.
-                writeAndroidSetupScript();
-
-                // Mark the boot in-progress; a healthy run clears it below. If the VM
-                // aborts on a bad image, this file survives → next launch recovers (a).
-                try { bootPending.createNewFile(); } catch (IOException ignore) {}
-
-                int res = startVMNative(libPath, imagePath, pluginsPath);
-                Log.i(TAG, "startVMNative() retornó: " + res);
-
-                if (res != 0) {
-                    // The native side could not load the VM / find its entry point.
-                    // Without this the screen just stayed black with no explanation.
-                    Log.e(TAG, "VM no pudo iniciar (" + res + "): " + getLastError());
-                    bootPending.delete();
-                    showLoadImageDialog("The VM could not start with that image. Pick another.");
-                    return;
+                    // Delay corto para asegurar que DISPLAY esté listo
+                    _display.asView().postDelayed(
+                            XServerActivity.this::bootChosenImage, 500); // ← importante
                 }
-                _vmRunning = true;
-
-                // Still alive a few seconds later ⇒ the image booted fine.
-                _screenView.postDelayed(() -> {
-                    if (bootPending.delete()) Log.i(TAG, "boot healthy; cleared .boot_pending");
-                    // A queued File in… script was read at startup — remove it so
-                    // it runs exactly once (deleting the file doesn't affect the
-                    // already-scheduled evaluation).
-                    File pf = new File(filesDir, "pending-filein.st");
-                    if (pf.delete()) Log.i(TAG, "consumed pending-filein.st");
-                }, 7000);
-
-                // Copy fileouts (.st/.cs) the image writes into the user-visible
-                // Downloads/OpenSmalltalk/ folder as they appear.
-                startFileoutWatcher();
-
-            } catch (Throwable t) {
-                Log.e(TAG, "Error lanzando VM", t);
-            }
-        }, 500); // ← importante
-    }
-});
+            });
+        }
 
 
-        setAccessControl();
         FrameLayout fl = (FrameLayout) findViewById(R.id.frame);
 
-        _screenView = _xServer.getScreen();
-        fl.addView(_screenView);
+        if (_nativeDisplay) {
+            // No X server at all: the VM renders into this surface itself. Boot only once
+            // the surface exists — the driver reads the image's screen size from the first
+            // one it is handed.
+            SqueakSurfaceView surface = new SqueakSurfaceView(this);
+            surface.setSurfaceReadyListener((w, h) -> bootChosenImage());
+            _display = surface;
+            fl.addView(surface);
+            surface.requestFocus();
+            // Not adjustResize: shrinking the surface for the keyboard would leave the
+            // logical size behind and SurfaceFlinger would squash the world vertically.
+            getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING);
+        } else {
+            setAccessControl();
+            _screenView = _xServer.getScreen();
+            _display = new X11Display(_screenView);
+            fl.addView(_screenView);
+        }
 
         // On-screen access to the options menu + soft keyboard. Phones have no
         // hardware MENU key and the ActionBar is hidden in fullscreen, so without
@@ -313,23 +255,24 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // when it's dismissed). We don't use adjustResize — resizing the view would
         // resize the whole X display and reflow the Smalltalk world.
         fl.getViewTreeObserver().addOnGlobalLayoutListener(() -> {
-            if (_screenView == null) return;
-            int viewH = _screenView.getHeight();
+            if (_display == null) return;
+            final View dv = _display.asView();
+            int viewH = dv.getHeight();
             if (viewH <= 0) return;
             // Classic keyboard-height detection (compileSdk 29 has no WindowInsets.Type):
             // the visible display frame shrinks by the IME height when it's up.
             android.graphics.Rect r = new android.graphics.Rect();
-            _screenView.getWindowVisibleDisplayFrame(r);
-            int imeH = Math.max(0, _screenView.getRootView().getHeight() - r.bottom);
+            dv.getWindowVisibleDisplayFrame(r);
+            int imeH = Math.max(0, dv.getRootView().getHeight() - r.bottom);
             float ty = 0f;
             if (imeH > viewH * 0.15f) {  // keyboard is up
-                float scale = _screenView.getDisplayScale();
-                int caretY = Math.round(_screenView.getPointerY() * scale);  // physical caret y
+                int caretY = _display.caretY();   // physical; -1 = backend cannot say
+                if (caretY < 0) return;
                 int keyboardTop = viewH - imeH;
                 int over = caretY - (keyboardTop - dp(28));
                 if (over > 0) ty = -over;
             }
-            if (_screenView.getTranslationY() != ty) _screenView.setTranslationY(ty);
+            _display.applyImePan(ty);
         });
 
         PowerManager pm;
@@ -418,7 +361,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     @Override
     public void onDestroy() {
         stopFileoutWatcher();
-        _xServer.stop();
+        if (_xServer != null) _xServer.stop();   // null on the native display path
         super.onDestroy();
 
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
@@ -433,6 +376,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      */
     @Override
     public boolean onCreateOptionsMenu(Menu menu) {
+        if (_xServer == null) return false;   // legacy X-only menu; unreachable in practice
         MenuItem item;
 
         item = menu.add(0, MENU_KEYBOARD, 0, "Keyboard");
@@ -487,6 +431,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      */
     @Override
     public boolean onOptionsItemSelected(MenuItem item) {
+        if (_xServer == null) return false;   // legacy X-only menu
         super.onOptionsItemSelected(item);
 
         switch (item.getItemId()) {
@@ -652,6 +597,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * Load the access control hosts from persistent storage.
      */
     private void setAccessControl() {
+        if (_xServer == null) return;   // native display: there is no server to control
         SharedPreferences prefs = getSharedPreferences("AccessControlHosts", MODE_PRIVATE);
         Map<String, ?> map = prefs.getAll();
         HashSet<Integer> hosts = _xServer.getAccessControlHosts();
@@ -896,6 +842,162 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         return root;
     }
 
+
+    /**
+     * Choose the image, check it is bootable, and start the VM on it.
+     *
+     * <p>Hoisted out of the X server's start listener so both backends can reach it: under
+     * X11 it still runs 500 ms after the server is up, under the native display it runs as
+     * soon as the surface exists (the driver takes the image's screen size from the first
+     * surface it is given, so booting earlier would show the world a 0x0 screen).
+     */
+    private synchronized void bootChosenImage() {
+        if (_vmStarted) return;
+        File filesDir = getFilesDir();
+        File marker = new File(filesDir, ".custom_image");
+        // Nothing chosen yet? Don't auto-boot the bundled image — show the
+        // "Load image" chooser (download Squeak/Cuis, or browse the device).
+        if (!marker.exists()) {
+            showLoadImageDialog();
+            return;
+        }
+
+        File image = new File(filesDir, currentImageName());
+        File bootPending = new File(filesDir, ".boot_pending");
+
+        if (!image.isFile()) {
+            Log.w(TAG, "chosen image " + image.getName() + " is gone — back to the chooser");
+            marker.delete();
+            bootPending.delete();  // a stale one must not condemn the NEXT choice
+            showLoadImageDialog("That image is no longer on the device. Pick another.");
+            return;
+        }
+
+        // Don't brick the app on an image that can't boot (a 32-bit image, say,
+        // makes the 64-bit VM abort the whole process → the app "dies" and, since
+        // the marker + bad image persist, keeps dying every launch). Two guards:
+        //  (a) crash-loop: the previous boot wrote .boot_pending and never cleared
+        //      it (a healthy boot clears it a few seconds in), so it died early;
+        //  (b) the image isn't a 64-bit Spur image (wrong word size).
+        // Say which of the two it was. Reporting a crash-loop as "it needs to be
+        // a 64-bit Spur image" sends people off to re-download images that were
+        // never the problem — it did exactly that when a version upgrade left
+        // stale plugins behind and the VM died on a symbol mismatch.
+        boolean wrongWordSize = is32BitSpurImage(image);
+        if (bootPending.exists() || wrongWordSize) {
+            Log.w(TAG, "previous image failed to boot (pending=" + bootPending.exists()
+                    + ", 32bit=" + wrongWordSize + ") — back to the chooser");
+            bootPending.delete();
+            marker.delete();  // clears the loop; the chooser opens instead
+            showLoadImageDialog(wrongWordSize
+                    ? "That image is 32-bit — the VM needs a 64-bit Spur image. Pick another."
+                    : "The VM stopped while starting " + image.getName() + ". If other images "
+                      + "fail too it is the app, not the image — please report it.");
+            return;
+        }
+
+        try {
+            String libPath = getApplicationInfo().nativeLibraryDir + "/libsqueak.so";
+            String imagePath = image.getAbsolutePath();
+            String pluginsPath = filesDir.getAbsolutePath() + "/plugins";
+
+            Log.i(TAG, "Lanzando VM");
+            Log.i(TAG, "libPath=" + libPath);
+            Log.i(TAG, "imagePath=" + imagePath);
+            Log.i(TAG, "pluginsPath=" + pluginsPath);
+
+            // Drop any trailing "lost changes" (a dangling ----STARTUP---- that
+            // Cuis wrote last boot and Android killed before a clean quit) so the
+            // image doesn't pop the "Last changes may have been lost" dialog.
+            pruneChangesFile();
+
+            // Fresh per-boot image adaptation script (fileout-to-Downloads patch,
+            // author-initials preseed, script chaining) — see writeAndroidSetupScript.
+            writeAndroidSetupScript();
+
+            // Mark the boot in-progress; a healthy run clears it below. If the VM
+            // aborts on a bad image, this file survives → next launch recovers (a).
+            try { bootPending.createNewFile(); } catch (IOException ignore) {}
+
+            _vmStarted = true;
+            launchVm(libPath, imagePath, pluginsPath, bootPending, filesDir);
+
+        } catch (Throwable t) {
+            Log.e(TAG, "Error lanzando VM", t);
+        }
+}
+
+    /**
+     * Start the VM. Under X11 this is the same in-line call it always was. Under the native
+     * display two things have to differ: {@link NativeDisplay#enable} must happen first,
+     * because argv is built inside startVMNative and branches on it; and the call must
+     * leave the UI thread, because it dlopens some sixty libraries and gets here from a
+     * surface callback, which has to return promptly.
+     */
+    private void launchVm(String libPath, String imagePath, String pluginsPath,
+                          File bootPending, File filesDir) {
+        if (!_nativeDisplay) {
+            onVmLaunchResult(startVMNative(libPath, imagePath, pluginsPath), bootPending, filesDir);
+            return;
+        }
+        ensureNativeDisplayDriver();
+        NativeDisplay.enable(true);
+        new Thread(() -> {
+            int res = startVMNative(libPath, imagePath, pluginsPath);
+            runOnUiThread(() -> onVmLaunchResult(res, bootPending, filesDir));
+        }, "squeak-boot").start();
+    }
+
+    /**
+     * Make sure vm-display-android.so is in the plugins directory. Normally extractPlugins()
+     * put it there, but an install that predates the driver has an up-to-date asset marker
+     * and would skip it — and without the driver the VM would fail to open a display.
+     */
+    private void ensureNativeDisplayDriver() {
+        File dest = new File(new File(getFilesDir(), "plugins"), "vm-display-android.so");
+        if (dest.isFile() && dest.length() > 0) return;
+        dest.getParentFile().mkdirs();
+        try (java.io.InputStream in = getAssets().open("plugins/vm-display-android.so");
+             java.io.OutputStream out = new java.io.FileOutputStream(dest)) {
+            byte[] buf = new byte[64 * 1024];
+            int n;
+            while ((n = in.read(buf)) > 0) out.write(buf, 0, n);
+            Log.i(TAG, "native display: extracted the driver on demand");
+        } catch (IOException e) {
+            Log.e(TAG, "native display: cannot extract the driver", e);
+        }
+    }
+
+    /** UI thread, both backends: what to do once the VM has (or has not) started. */
+    private void onVmLaunchResult(int res, File bootPending, File filesDir) {
+        Log.i(TAG, "startVMNative() retornó: " + res);
+
+        if (res != 0) {
+            // The native side could not load the VM / find its entry point.
+            // Without this the screen just stayed black with no explanation.
+            Log.e(TAG, "VM no pudo iniciar (" + res + "): " + getLastError());
+            bootPending.delete();
+            _vmStarted = false;   // let the chooser's pick try again
+            showLoadImageDialog("The VM could not start with that image. Pick another.");
+            return;
+        }
+        _vmRunning = true;
+
+        // Still alive a few seconds later ⇒ the image booted fine.
+        _display.asView().postDelayed(() -> {
+            if (bootPending.delete()) Log.i(TAG, "boot healthy; cleared .boot_pending");
+            // A queued File in… script was read at startup — remove it so
+            // it runs exactly once (deleting the file doesn't affect the
+            // already-scheduled evaluation).
+            File pf = new File(filesDir, "pending-filein.st");
+            if (pf.delete()) Log.i(TAG, "consumed pending-filein.st");
+        }, 7000);
+
+        // Copy fileouts (.st/.cs) the image writes into the user-visible
+        // Downloads/OpenSmalltalk/ folder as they appear.
+        startFileoutWatcher();
+    }
+
     private void addFloatingControls(FrameLayout fl) {
         LinearLayout bar = new LinearLayout(this);
         bar.setOrientation(LinearLayout.HORIZONTAL);
@@ -940,12 +1042,12 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // Both arming buttons are "press me, then touch the world", and the expanded
         // bar covers the bottom of that world — so get out of the way immediately.
         rclickBtn.setOnClickListener(v -> {
-            _xServer.getScreen().armRightClick();
+            _display.armNextTap(SmalltalkDisplay.BUTTON_MENU);
             _controlsExpanded = false; applyExpanded.run();
             Toast.makeText(this, "Next tap = right-click (context menu)", Toast.LENGTH_SHORT).show();
         });
         halosBtn.setOnClickListener(v -> {
-            _xServer.getScreen().armMiddleClick();
+            _display.armNextTap(SmalltalkDisplay.BUTTON_HALOS);
             _controlsExpanded = false; applyExpanded.run();
             Toast.makeText(this, "Next tap = halos (middle-click)", Toast.LENGTH_SHORT).show();
         });
@@ -984,8 +1086,8 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
     /** Bring up / dismiss the Android soft keyboard, aimed at the Smalltalk view. */
     private void toggleKeyboard() {
         InputMethodManager imm = (InputMethodManager) getSystemService(Service.INPUT_METHOD_SERVICE);
-        if (imm == null || _screenView == null) return;
-        _screenView.requestFocus();
+        if (imm == null || _display == null) return;
+        _display.asView().requestFocus();
         imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
     }
 
@@ -996,50 +1098,106 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * Only what a Smalltalk-on-phone user needs is kept here.
      */
     private void showOptionsDialog() {
-        final ScreenView sv = _xServer.getScreen();
-        float zoom = 1.0f;
-        try { zoom = sv.getDisplayScale(); } catch (Exception e) { }
-        final String[] labels = {
-                "Load image…",
-                "File in code (.st)…",
-                "Zoom (" + zoom + "×)",
-                "Smooth zoom: " + (sv.isSmoothZoom() ? "on" : "off"),
-                "Trackpad mode: " + (sv.isTrackpadMode() ? "on" : "off"),
-                "Precise pointer: " + (sv.isPreciseTouch() ? "on" : "off"),
-                "Mouse pointer: " + (sv.isShowPointer() ? "on" : "off"),
-                "Shared clipboard: " + (sv.isSharedClipboard() ? "on" : "off"),
-                "Long-press menu: " + (sv.isLongPressMenuEnabled() ? "on" : "off"),
-                "Screen orientation",
-        };
+        final java.util.List<String> labels = new java.util.ArrayList<>();
+        final java.util.List<Runnable> actions = new java.util.ArrayList<>();
+
+        labels.add("Load image…");
+        actions.add(this::showLoadImageDialog);
+
+        if (_display.supports(SmalltalkDisplay.Feature.FILE_IN)) {
+            labels.add("File in code (.st)…");
+            actions.add(this::launchFileInPicker);
+        }
+        if (_display.supports(SmalltalkDisplay.Feature.ZOOM)) {
+            labels.add("Zoom (" + _display.getDisplayScale() + "×)");
+            actions.add(this::showZoomDialog);
+        }
+
+        addToggleItem(labels, actions, SmalltalkDisplay.Feature.SMOOTH_ZOOM, "Smooth zoom",
+                "Smooth zoom (better for images; softer text).",
+                "Crisp zoom (nearest-neighbour; best for text).", Toast.LENGTH_SHORT);
+        addToggleItem(labels, actions, SmalltalkDisplay.Feature.TRACKPAD, "Trackpad mode",
+                "Trackpad: slide to move the pointer, tap to click, hold+drag to drag.",
+                "Trackpad off (direct touch).", Toast.LENGTH_LONG);
+        addToggleItem(labels, actions, SmalltalkDisplay.Feature.PRECISE_POINTER,
+                "Precise pointer", null, null, Toast.LENGTH_SHORT);
+        addToggleItem(labels, actions, SmalltalkDisplay.Feature.POINTER_ARROW,
+                "Mouse pointer", null, null, Toast.LENGTH_SHORT);
+        addToggleItem(labels, actions, SmalltalkDisplay.Feature.SHARED_CLIPBOARD,
+                "Shared clipboard", null, null, Toast.LENGTH_SHORT);
+        addToggleItem(labels, actions, SmalltalkDisplay.Feature.LONG_PRESS_MENU,
+                "Long-press menu", null, null, Toast.LENGTH_SHORT);
+
+        labels.add("Screen orientation");
+        actions.add(this::toggleOrientation);
+
+        labels.add("Display engine: " + (_nativeDisplay ? "native (beta)" : "X server"));
+        actions.add(this::showDisplayEngineDialog);
+
         new AlertDialog.Builder(this)
                 .setTitle("Options")
-                .setItems(labels, (dialog, which) -> {
-                    switch (which) {
-                        case 0: showLoadImageDialog(); break;
-                        case 1: launchFileInPicker(); break;
-                        case 2: showZoomDialog(); break;
-                        case 3: {
-                            boolean on = sv.toggleSmoothZoom();
-                            Toast.makeText(this, on
-                                    ? "Smooth zoom (better for images; softer text)."
-                                    : "Crisp zoom (nearest-neighbour; best for text).", Toast.LENGTH_SHORT).show();
-                            break;
-                        }
-                        case 4: {
-                            boolean on = sv.toggleTrackpadMode();
-                            Toast.makeText(this, on
-                                    ? "Trackpad: slide to move the pointer, tap to click, hold+drag to drag."
-                                    : "Trackpad off (direct touch).", Toast.LENGTH_LONG).show();
-                            break;
-                        }
-                        case 5: sv.togglePreciseTouch(); break;
-                        case 6: sv.toggleShowPointer(); break;
-                        case 7: sv.toggleSharedClipboard(); break;
-                        case 8: sv.toggleLongPressMenu(); break;
-                        case 9: toggleOrientation(); break;
-                    }
-                })
+                .setItems(labels.toArray(new String[0]),
+                          (dialog, which) -> actions.get(which).run())
                 .setNegativeButton("Close", null)
+                .show();
+    }
+
+    /**
+     * Add a "Label: on/off" row, but only if this backend has the feature at all. Built as
+     * a list rather than a fixed array with a switch over its indices: hiding one item used
+     * to shift the meaning of every item after it.
+     */
+    private void addToggleItem(java.util.List<String> labels, java.util.List<Runnable> actions,
+                               SmalltalkDisplay.Feature f, String label,
+                               String onMsg, String offMsg, int toastLength) {
+        if (!_display.supports(f)) return;
+        labels.add(label + ": " + (_display.isEnabled(f) ? "on" : "off"));
+        actions.add(() -> {
+            boolean on = _display.toggle(f);
+            String msg = on ? onMsg : offMsg;
+            if (msg != null) Toast.makeText(this, msg, toastLength).show();
+        });
+    }
+
+    /**
+     * Switch between the two display backends.
+     *
+     * <p>It cannot take effect in place: the VM binds to a display driver through its argv
+     * and keeps it for the life of the process. So this writes the marker and restarts —
+     * through {@link XServerActivity}, which is the entry point that reads the marker.
+     */
+    private void showDisplayEngineDialog() {
+        final boolean nowNative = _nativeDisplay;
+        new AlertDialog.Builder(this)
+                .setTitle("Display engine")
+                .setMessage(nowNative
+                        ? "Now: native — the VM draws straight into the screen, with no X "
+                          + "server. About 5× the repaints, but trackpad mode, the pointer "
+                          + "arrow and the long-press menu are not ported to it yet.\n\n"
+                          + "Switching restarts the app."
+                        : "Now: the embedded X server — everything works, but every frame "
+                          + "travels through a socket and a Java protocol parser.\n\nThe "
+                          + "native engine draws straight into the screen instead: about 5× "
+                          + "the repaints. Trackpad mode, the pointer arrow and the "
+                          + "long-press menu are not ported to it yet.\n\n"
+                          + "Switching restarts the app.")
+                .setPositiveButton(nowNative ? "Use the X server" : "Use the native engine",
+                        (d, w) -> {
+                            File marker = new File(getFilesDir(), NATIVE_DISPLAY_MARKER);
+                            if (nowNative) {
+                                marker.delete();
+                            } else {
+                                try { marker.createNewFile(); }
+                                catch (IOException e) {
+                                    Log.e(TAG, "cannot write " + NATIVE_DISPLAY_MARKER, e);
+                                    Toast.makeText(this, "Could not switch engine.",
+                                                   Toast.LENGTH_SHORT).show();
+                                    return;
+                                }
+                            }
+                            restartApp(XServerActivity.class);
+                        })
+                .setNegativeButton("Cancel", null)
                 .show();
     }
 
@@ -1049,19 +1207,22 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * (e.g. 1.75×) scale unevenly and look softer — so they're labelled.
      */
     private void showZoomDialog() {
-        final ScreenView sv = _xServer.getScreen();
         final float[] levels = { 1.0f, 1.5f, 2.0f, 2.5f, 3.0f, 4.0f };
-        float cur = 1.0f;
-        try { cur = sv.getDisplayScale(); } catch (Exception e) { }
+        final float cur = _display.getDisplayScale();
+        // "(sharp)" describes nearest-neighbour upscaling. The native backend has no
+        // upscaler — it tells the image it has a smaller screen and the image re-lays-out —
+        // so every level is equally sharp there and the annotation would be a lie.
+        final boolean annotateSharpness = _display.supports(SmalltalkDisplay.Feature.SMOOTH_ZOOM);
         final String[] labels = new String[levels.length];
         for (int i = 0; i < levels.length; i++) {
             boolean whole = levels[i] == Math.rint(levels[i]);
             boolean current = Math.abs(levels[i] - cur) < 0.01f;
-            labels[i] = (current ? "●  " : "○  ") + levels[i] + "×" + (whole ? "   (sharp)" : "");
+            labels[i] = (current ? "●  " : "○  ") + levels[i] + "×"
+                      + (annotateSharpness && whole ? "   (sharp)" : "");
         }
         new AlertDialog.Builder(this)
-                .setTitle("Zoom — whole numbers are sharpest")
-                .setItems(labels, (dialog, which) -> sv.setDisplayScale(levels[which]))
+                .setTitle(annotateSharpness ? "Zoom — whole numbers are sharpest" : "Zoom")
+                .setItems(labels, (dialog, which) -> _display.setDisplayScale(levels[which]))
                 .setNegativeButton("Close", null)
                 .show();
     }
@@ -1563,7 +1724,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // do with the drop, exactly like on a desktop.
         boolean dropped = false;
         if (_vmRunning) {
-            try { dropped = _xServer.getScreen().dropFile(dst.getAbsolutePath()); }
+            try { dropped = _display.dropFile(dst.getAbsolutePath()); }
             catch (Exception e) { Log.e(TAG, "XDND drop failed", e); }
         }
         if (dropped) {
@@ -1681,7 +1842,9 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
      * allowed on Android 10+, unlike a backgrounded AlarmManager relaunch, which
      * Android blocks) we launch it, and it kills us and relaunches us cleanly.
      */
-    private void restartApp() {
+    private void restartApp() { restartApp(getClass()); }
+
+    private void restartApp(Class<?> target) {
         // A deliberate restart is not a crashed boot: clear .boot_pending so the
         // next launch isn't mistaken for a crash-loop (it stays set if the user
         // switches images within ~7 s of a boot, before the healthy-boot timer).
@@ -1691,7 +1854,7 @@ _xServer.setOnStartListener(new XServer.OnXSeverStartListener() {
         // server can't serve, and the new process dies a few seconds in.
         try { if (_xServer != null) _xServer.stop(); } catch (Exception e) { Log.e(TAG, "xserver stop", e); }
 
-        Intent next = new Intent(this, XServerActivity.class);
+        Intent next = new Intent(this, target);
         next.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
 
         Intent trampoline = new Intent(this, RestartActivity.class);

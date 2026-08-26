@@ -58,4 +58,22 @@ public final class NativeDisplay {
 
     /** Push the system clipboard in, so the image's paste sees it. */
     public static native void setClipboard(String text);
+
+    /**
+     * Called from the VM thread when the image copies something, so the app can mirror it
+     * into Android's clipboard. Set by whoever owns the display; null means "do not mirror",
+     * which is what the "Shared clipboard" option turns off.
+     */
+    public interface ClipboardSink { void onImageCopied(String text); }
+
+    private static volatile ClipboardSink _sink;
+
+    public static void setClipboardSink(ClipboardSink sink) { _sink = sink; }
+
+    /** Invoked by JNI (see nd_clipboard_written in squeak_jni.c). Keep the name in sync. */
+    @SuppressWarnings("unused")
+    static void onImageWroteClipboard(String text) {
+        ClipboardSink sink = _sink;
+        if (sink != null) sink.onImageCopied(text);
+    }
 }

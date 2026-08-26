@@ -327,8 +327,31 @@ Full write-up in [`docs/NATIVE-DISPLAY.md`](docs/NATIVE-DISPLAY.md). The short v
 - Not Pharo's shape: Pharo's VM is headless and the *image* drives SDL2 over UFFI; Squeak
   and Cuis expect the VM to own the display, so a display module changes nothing above the
   VM (and costs no SDL dependency, no `SDLActivity`).
-- Live behind `NativeDisplayActivity` (exported, launch with `am start`) so the shipping
-  X11 path is untouched. What is still missing to replace X11 is listed in the doc.
+- **The menu works on it (2026-08-26).** Both backends are now two modes of ONE activity:
+  `SmalltalkDisplay` (an interface in the app module) + `X11Display` (an adapter — so
+  `library/` keeps a ZERO-line diff; ScreenView implements nothing). ☰ → *Display engine*
+  switches and restarts; the choice is a `.native_display` marker in filesDir, since the VM
+  binds its display driver in argv and cannot change it while running.
+- Two things that had to change shape, both traps: the whole app boot used to be a side
+  effect of `XServer.start()`'s listener, so it was hoisted into `bootChosenImage()` that
+  either backend calls; and `showOptionsDialog` was a fixed label array with a `switch` over
+  its indices, so hiding one item shifted every later one — it is built from a filtered list
+  now (`supports()`), which makes "not available on this backend" data instead of an `if`.
+- **`enable(true)` must precede `startVMNative`** (argv is built inside it and branches on
+  the flag), and on the native path the call must leave the UI thread — it comes from a
+  surface callback and dlopens ~60 libraries.
+- **The button numbers mislead.** `rybMap` maps X 1/2/3 → red/yellow/blue, and the X path
+  sends button 3 for the context menu and button 2 for halos. So natively menu = blue bit
+  (1), halos = yellow bit (2), i.e. the opposite of the colour names. Verified on device:
+  ⊙ opens the World menu, ✦ draws the halo ring.
+- Zoom here is NOT the X upscaler: the image is told it has a smaller screen and re-lays-out,
+  and SurfaceFlinger scales the buffer up in hardware — so the VM draws FEWER pixels, not
+  more. Confirm a real resize with the driver's two log lines (`ioScreenSize -> WxH` then
+  `image Display is WxH`); if only the first appears, the compositor is magnifying a stale
+  Display.
+- Still hidden on this path: trackpad, pointer arrow (needs an overlay view — a SurfaceView
+  cannot draw over its own buffer, and the driver has no cursor), long-press menu, IME
+  panning. See the doc.
 
 ## Squeak file-in (drop into running image) — OPEN, hard
 
