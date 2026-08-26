@@ -17,8 +17,8 @@ android {
         minSdkVersion 28
         // Google Play requires new apps/updates to target API 35 (Android 15).
         targetSdk 35
-        versionCode 45
-        versionName "1.45"
+        versionCode 46
+        versionName "1.46"
 
         ndk {
             // arm64 only: libsqueak.so (the VM) exists for arm64-v8a alone, so an

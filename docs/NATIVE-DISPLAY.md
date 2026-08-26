@@ -134,8 +134,8 @@ options dialog shows.
 |---|---|
 | Load image…, File in code, Screen orientation, Zoom | work |
 | Precise pointer, Shared clipboard | work |
+| Trackpad mode, Mouse pointer, Long-press menu | work |
 | Smooth zoom | **hidden** — nothing to toggle: the X path filters a `Canvas` blit, here the scaling is SurfaceFlinger's and the image re-lays-out instead of being interpolated |
-| Trackpad mode, Mouse pointer, Long-press menu | **hidden** — not ported yet (below) |
 
 Verified on the emulator with Cuis 7.5: the world draws and responds to touch, ⊙ opens the
 World menu, ✦ raises a morph's halos, ⌨ brings up the keyboard and typing reaches the image,
@@ -151,20 +151,44 @@ halos**. So on this backend menu = the *blue* bit (1) and halos = the *yellow* b
 the opposite of what the colour names suggest. Reproducing those exact bits is what makes
 the two backends behave identically.
 
+## The four input features, and what each had to get right
+
+Ported after the menu, all verified on the emulator:
+
+- **Trackpad mode** — `ScreenView.handleTrackpadTouch` is pure MotionEvent arithmetic; only
+  its two sinks change. The rule that makes it work is that a hover must carry **no buttons**
+  (that is what opens Cuis submenus), so nothing is emitted on ACTION_DOWN. The ⊙/✦ arm is
+  consumed at UP here, not at DOWN as in direct touch: a slide produces no click and would
+  otherwise swallow it.
+- **The pointer arrow** — a sibling overlay view (`PointerOverlayView`) added above the
+  surface and below the pill. It could not be drawn in `onDraw`: a `SurfaceView`'s content is
+  the VM's buffer and the view's own drawing goes to the window layer. It is also the *only*
+  pointer that will ever exist here, since the driver stubs the cursor primitives. It takes
+  touch from nobody (`dispatchTouchEvent` returns false) and scales with density, **not** with
+  the zoom — zooming shrinks the logical screen, so a zoom-scaled arrow would shrink as
+  everything else grew.
+- **Long-press menu** — a floating `ActionMode` with the same items. Ctrl chords are sent as
+  Squeak expects them: the CONTROL CHARACTER carrying CtrlKeyBit, with the plain letter as the
+  Unicode value, which is exactly what XLookupString handed the VM. Each chord is followed by a
+  zero-modifier mouse event, because the driver keeps the modifier word globally and the next
+  tap would otherwise be a ctrl-click.
+- **IME panning** — `SOFT_INPUT_ADJUST_NOTHING` is required here (resizing the surface would
+  leave the logical size behind and the compositor would squash the world), and it also means
+  `getWindowVisibleDisplayFrame` reports no keyboard at all. The height comes from
+  `WindowInsets.Type.ime()` instead, with the old measurement as the fallback below API 30.
+  The pan moves the surface and the overlay together.
+
+**Stuck buttons are the standing hazard.** Every path that presses releases — the 350 ms
+hold-to-drag, a mode toggle mid-drag, surface teardown — because there is no server in between
+to notice an unmatched press: the image would simply stay in a drag forever.
+
 ## What is still missing
 
-- **Trackpad mode** — `ScreenView.handleTrackpadTouch` is pure MotionEvent maths; its two
-  sinks become `NativeDisplay.postMouse`. Must honour the ⊙/✦ arm flags there too, or those
-  buttons silently degrade in trackpad mode (a bug the X path had).
-- **The pointer arrow** — cannot be copied: a `SurfaceView`'s content is the VM's buffer and
-  its own `onDraw` does not composite over it, so it needs a sibling overlay view. The
-  driver draws no cursor either (`ioSetCursorWithMask` is a stub), so there is currently no
-  visible pointer at all on this path. The app knows the position — it posts every event.
-- **Long-press menu** — the gate is trivial, but every item is X synthesis today.
-- **IME panning** — `caretY()` answers -1, so the keyboard simply overlays rather than
-  lifting the caret. It becomes real once the pointer overlay tracks a position.
 - Depths other than 32 bpp are refused (`ioHasDisplayDepth`), which every modern image is
-  fine with, and rotation is untested.
+  fine with, and rotation is lightly tested.
+- The `.boot_pending` crash-loop guard is as coarse here as on the X path: any death within
+  7 s — an emulator's slow first start after an install, say — is read as a failed boot and
+  drops the chosen image.
 
 ## Upstreaming
 

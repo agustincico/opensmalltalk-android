@@ -3,13 +3,20 @@ package au.com.darkside.x11server;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.text.InputType;
 import android.util.AttributeSet;
 import android.util.Log;
+import android.view.ActionMode;
 import android.view.KeyEvent;
+import android.view.Menu;
+import android.view.MenuItem;
 import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 import android.view.SurfaceHolder;
 import android.view.SurfaceView;
+import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputConnection;
 
@@ -52,6 +59,30 @@ public class SqueakSurfaceView extends SurfaceView
     private boolean _sharedClipboard;
     private SurfaceReadyListener _listener;
 
+    /** Where the image believes the pointer is, in LOGICAL coordinates. -1 = nowhere yet. */
+    private int _pointerX = -1, _pointerY = -1;
+    private boolean _showPointer = true;
+    private PointerOverlayView _overlay;
+
+    /** Trackpad mode: the finger drives a RELATIVE cursor, laptop style. */
+    private boolean _trackpad;
+    private float _tpLastX, _tpLastY, _tpDownX, _tpDownY;
+    private boolean _tpMoved, _tpDragging;
+    private int _touchSlop;
+    private final Handler _handler = new Handler(Looper.getMainLooper());
+    private Runnable _tpLongPress;
+
+    /** Long-press menu (CTRL chords, clicks, keyboard). Off by default, as on the X path. */
+    private boolean _longPressMenu;
+    private Runnable _lpRun;
+    private float _lpDownX, _lpDownY;
+    private ActionMode _actionMode;
+    private Runnable _keyboardToggler;
+
+    private static final int ACT_CTRL_C = 1, ACT_CTRL_V = 2, ACT_CTRL_X = 3, ACT_CTRL_A = 4,
+                             ACT_ESC = 5, ACT_M_CLICK = 6, ACT_R_CLICK = 7,
+                             ACT_KEYBOARD = 8, ACT_CANCEL = 9;
+
     /** Told once, when the surface first exists and the VM may be started against it. */
     public interface SurfaceReadyListener {
         void onSurfaceReady(int width, int height);
@@ -73,7 +104,7 @@ public class SqueakSurfaceView extends SurfaceView
 
     // --- SmalltalkDisplay --------------------------------------------------
 
-    @Override public android.view.View asView() { return this; }
+    @Override public View asView() { return this; }
 
     @Override
     public boolean supports(Feature f) {
@@ -82,6 +113,9 @@ public class SqueakSurfaceView extends SurfaceView
         case PRECISE_POINTER:
         case SHARED_CLIPBOARD:
         case FILE_IN:
+        case TRACKPAD:
+        case POINTER_ARROW:
+        case LONG_PRESS_MENU:
             return true;
         case SMOOTH_ZOOM:
             // Nothing to toggle: the X path filters a Canvas blit
@@ -89,10 +123,6 @@ public class SqueakSurfaceView extends SurfaceView
             // ANativeWindow offers no filter knob. The image re-lays-out instead, so
             // there is no interpolation to soften in the first place.
             return false;
-        case TRACKPAD:
-        case POINTER_ARROW:
-        case LONG_PRESS_MENU:
-            return false;   // ported separately; see docs/NATIVE-DISPLAY.md
         default:
             return false;
         }
@@ -103,6 +133,9 @@ public class SqueakSurfaceView extends SurfaceView
         switch (f) {
         case PRECISE_POINTER:  return _touchOffsetY != 0;
         case SHARED_CLIPBOARD: return _sharedClipboard;
+        case TRACKPAD:         return _trackpad;
+        case POINTER_ARROW:    return _showPointer;
+        case LONG_PRESS_MENU:  return _longPressMenu;
         default:               return false;
         }
     }
@@ -123,10 +156,36 @@ public class SqueakSurfaceView extends SurfaceView
                 NativeDisplay.setClipboardSink(null);
             }
             return _sharedClipboard;
+        case TRACKPAD:
+            // Leaving a button held here would trap the image in a drag forever: there is
+            // no server in between to notice the press was never matched.
+            releaseHeldButtons();
+            cancelTrackpadTimer();
+            _tpDragging = _tpMoved = false;
+            _trackpad = !_trackpad;
+            return _trackpad;
+        case POINTER_ARROW:
+            _showPointer = !_showPointer;
+            if (_overlay != null) _overlay.setVisible(_showPointer);
+            return _showPointer;
+        case LONG_PRESS_MENU:
+            _longPressMenu = !_longPressMenu;
+            if (!_longPressMenu) cancelLongPressTimer();
+            return _longPressMenu;
         default:
             return false;
         }
     }
+
+    /** Created by the activity and added to the frame just above this surface. */
+    View attachPointerOverlay(Context context) {
+        _overlay = new PointerOverlayView(context);
+        _overlay.setVisible(_showPointer);
+        return _overlay;
+    }
+
+    /** The long-press menu's Keyboard item; the view should not reach into the activity. */
+    public void setKeyboardToggler(Runnable r) { _keyboardToggler = r; }
 
     @Override
     public float getDisplayScale() {
@@ -145,13 +204,65 @@ public class SqueakSurfaceView extends SurfaceView
         _logicalW = Math.max(1, Math.round(_surfaceW / _pendingScale));
         _logicalH = Math.max(1, Math.round(_surfaceH / _pendingScale));
         NativeDisplay.setLogicalSize(_logicalW, _logicalH);
+        // A fixed logical point lands somewhere else physically once the logical size
+        // changes, so re-clamp and re-place the arrow instead of leaving it behind.
+        if (_pointerX >= 0) {
+            _pointerX = Math.min(_pointerX, _logicalW - 1);
+            _pointerY = Math.min(_pointerY, _logicalH - 1);
+            pushPointerToOverlay();
+        }
+    }
+
+    /**
+     * The one place an effect becomes a button bit. Both the pill's arming buttons and the
+     * long-press menu's clicks go through it, so a wrong constant is a compile error rather
+     * than two menu items quietly swapping behaviour — which is exactly the bug the X path
+     * shipped for a while ("M-Click" registered under the right-click action id).
+     */
+    private static int squeakBitFor(int effect) {
+        if (effect == BUTTON_MENU)  return BIT_BLUE;
+        if (effect == BUTTON_HALOS) return BIT_YELLOW;
+        return BIT_RED;
     }
 
     @Override
     public void armNextTap(int button) {
-        if (button == BUTTON_MENU)       _armedButton = BIT_BLUE;
-        else if (button == BUTTON_HALOS) _armedButton = BIT_YELLOW;
-        else                             _armedButton = 0;
+        _armedButton = (button == BUTTON_MENU || button == BUTTON_HALOS)
+                ? squeakBitFor(button) : 0;
+    }
+
+    /**
+     * Every pointer movement and button change goes through here: it posts to the image,
+     * remembers where the pointer is and keeps the on-screen arrow with it. Coordinates are
+     * LOGICAL — the same ones the image works in.
+     */
+    private void postPointer(int lx, int ly, int buttons) {
+        NativeDisplay.postMouse(lx, ly, buttons, 0);
+        if (lx == _pointerX && ly == _pointerY) return;
+        _pointerX = lx;
+        _pointerY = ly;
+        pushPointerToOverlay();
+    }
+
+    private void pushPointerToOverlay() {
+        if (_overlay == null || _pointerX < 0 || _logicalW == 0 || _logicalH == 0) return;
+        _overlay.moveTo(_pointerX * _surfaceW / (float) _logicalW,
+                        _pointerY * _surfaceH / (float) _logicalH);
+    }
+
+    /** Release anything still held, so a button can never be left down in the image. */
+    private void releaseHeldButtons() {
+        if (_buttons == 0) return;
+        _buttons = 0;
+        if (_pointerX >= 0) NativeDisplay.postMouse(_pointerX, _pointerY, 0, 0);
+    }
+
+    private void cancelTrackpadTimer() {
+        if (_tpLongPress != null) { _handler.removeCallbacks(_tpLongPress); _tpLongPress = null; }
+    }
+
+    private void cancelLongPressTimer() {
+        if (_lpRun != null) { _handler.removeCallbacks(_lpRun); _lpRun = null; }
     }
 
     /**
@@ -167,16 +278,35 @@ public class SqueakSurfaceView extends SurfaceView
         if (absolutePath == null || !NativeDisplay.isReady()) return false;
         if (_logicalW == 0 || _logicalH == 0) return false;
         int cx = _logicalW / 2, cy = _logicalH / 3;
-        NativeDisplay.postMouse(cx, Math.max(0, cy - 8), 0, 0);
-        NativeDisplay.postMouse(cx, cy, 0, 0);
+        postPointer(cx, Math.max(0, cy - 8), 0);
+        postPointer(cx, cy, 0);
         NativeDisplay.postDropFile(absolutePath);
         return true;
     }
 
-    /** No pointer concept yet on this backend, so the IME panner stays out of the way. */
-    @Override public int caretY() { return -1; }
+    /**
+     * The pointer's row in PHYSICAL pixels of the untranslated view, which is what the IME
+     * panner measures against.
+     *
+     * <p>The Y ratio, not {@link #getDisplayScale()} — that is the WIDTH ratio, and the two
+     * axes are rounded independently, so they differ for a fractional zoom and differ more
+     * after a rotation. And deliberately NOT adjusted for the pan already applied: the
+     * layout listener re-runs after every pan, so a caret that moved with it would make the
+     * pan chase itself.
+     */
+    @Override
+    public int caretY() {
+        if (_pointerY < 0 || _surfaceH == 0 || _logicalH == 0) return -1;
+        return Math.round(_pointerY * _surfaceH / (float) _logicalH);
+    }
 
-    @Override public void applyImePan(float translationY) { /* see caretY() */ }
+    @Override
+    public void applyImePan(float translationY) {
+        if (getTranslationY() != translationY) setTranslationY(translationY);
+        // The arrow must ride with the world it points at, or it detaches during the pan.
+        if (_overlay != null && _overlay.getTranslationY() != translationY)
+            _overlay.setTranslationY(translationY);
+    }
 
     // --- clipboard ---------------------------------------------------------
 
@@ -227,6 +357,11 @@ public class SqueakSurfaceView extends SurfaceView
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
         Log.i(TAG, "native display: surface destroyed");
+        // A timer that fires after the surface is gone would push a press into a queue the
+        // image drains on its next run.
+        cancelTrackpadTimer();
+        cancelLongPressTimer();
+        releaseHeldButtons();
         NativeDisplay.setSurface(null, 0, 0);   // blocks until any blit in flight finishes
     }
 
@@ -246,6 +381,8 @@ public class SqueakSurfaceView extends SurfaceView
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
+        if (_trackpad) { handleTrackpadTouch(event); return true; }
+
         int x = mapX(event.getX());
         int y = mapY(event.getY());
 
@@ -258,10 +395,11 @@ public class SqueakSurfaceView extends SurfaceView
             _downButton = (_armedButton != 0) ? _armedButton : BIT_RED;
             _armedButton = 0;
             _buttons = _downButton;
+            scheduleLongPressMenu(event.getX(), event.getY());
             // Move with no button first: the image tracks the pointer, and a press that
             // arrives at a stale position clicks wherever the previous one was.
-            NativeDisplay.postMouse(x, y, 0, 0);
-            NativeDisplay.postMouse(x, y, _buttons, 0);
+            postPointer(x, y, 0);
+            postPointer(x, y, _buttons);
             return true;
 
         case MotionEvent.ACTION_POINTER_DOWN:
@@ -269,21 +407,24 @@ public class SqueakSurfaceView extends SurfaceView
             // (ScreenView sends button 3 down+up on the second finger). Release the first
             // finger's button first, or the image sees two buttons held at once.
             if (event.getActionIndex() == 1) {
-                NativeDisplay.postMouse(x, y, 0, 0);
-                NativeDisplay.postMouse(x, y, BIT_BLUE, 0);
-                NativeDisplay.postMouse(x, y, 0, 0);
+                cancelLongPressTimer();
+                postPointer(x, y, 0);
+                postPointer(x, y, BIT_BLUE);
+                postPointer(x, y, 0);
                 _buttons = 0;
                 _downButton = BIT_RED;
             }
             return true;
 
         case MotionEvent.ACTION_MOVE:
-            NativeDisplay.postMouse(x, y, _buttons, 0);
+            vetoLongPressOnMovement(event.getX(), event.getY());
+            postPointer(x, y, _buttons);
             return true;
 
         case MotionEvent.ACTION_UP:
         case MotionEvent.ACTION_CANCEL:
-            NativeDisplay.postMouse(x, y, 0, 0);
+            cancelLongPressTimer();
+            postPointer(x, y, 0);
             _buttons = 0;
             _downButton = BIT_RED;
             return true;
@@ -292,6 +433,189 @@ public class SqueakSurfaceView extends SurfaceView
             return true;    // the gesture continues with the remaining finger
         }
         return super.onTouchEvent(event);
+    }
+
+    // --- trackpad mode -----------------------------------------------------
+
+    /**
+     * The finger drives a relative cursor instead of touching the world directly: a slide
+     * moves the pointer with NO button held (so hovering opens Cuis submenus, and your
+     * finger never covers what you are aiming at), a quick tap clicks at the cursor,
+     * press-pause-drag drags, and a second finger opens the context menu.
+     *
+     * <p>Ported from ScreenView.handleTrackpadTouch, which is pure MotionEvent arithmetic;
+     * only the two sinks change. The one rule that makes it work is that a hover must carry
+     * no buttons — that is why the press is not emitted on ACTION_DOWN.
+     */
+    private void handleTrackpadTouch(MotionEvent event) {
+        if (_touchSlop == 0)
+            _touchSlop = ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        final float scale = getDisplayScale();
+
+        switch (event.getActionMasked()) {
+
+        case MotionEvent.ACTION_DOWN:
+            _tpDownX = _tpLastX = event.getX();
+            _tpDownY = _tpLastY = event.getY();
+            _tpMoved = false;
+            _tpDragging = false;
+            if (_pointerX < 0) {   // first ever gesture: start in the middle of the world
+                _pointerX = _logicalW / 2;
+                _pointerY = _logicalH / 2;
+                pushPointerToOverlay();
+            }
+            cancelTrackpadTimer();
+            scheduleLongPressMenu(event.getX(), event.getY());
+            _tpLongPress = () -> {
+                // removeCallbacks loses to an already-dispatched runnable, so re-check.
+                if (!_tpMoved && !_tpDragging) {
+                    _tpDragging = true;
+                    cancelLongPressTimer();     // this hold is a drag, not a menu
+                    _buttons = BIT_RED;
+                    postPointer(_pointerX, _pointerY, _buttons);
+                }
+            };
+            _handler.postDelayed(_tpLongPress, 350);
+            break;
+
+        case MotionEvent.ACTION_MOVE: {
+            float dx = event.getX() - _tpLastX;
+            float dy = event.getY() - _tpLastY;
+            _tpLastX = event.getX();
+            _tpLastY = event.getY();
+            int nx = Math.max(0, Math.min(_logicalW - 1, _pointerX + Math.round(dx / scale)));
+            int ny = Math.max(0, Math.min(_logicalH - 1, _pointerY + Math.round(dy / scale)));
+            postPointer(nx, ny, _buttons);
+            double dist = Math.hypot(event.getX() - _tpDownX, event.getY() - _tpDownY);
+            // Any real movement means a slide, not a still hold: cancel the pending
+            // hold-to-drag on a SMALL threshold so a slow, precise slide never becomes a
+            // drag. Dragging is press AND pause.
+            if (!_tpDragging && dist > 10 * getResources().getDisplayMetrics().density)
+                cancelTrackpadTimer();
+            if (dist > _touchSlop) {
+                _tpMoved = true;
+                vetoLongPressOnMovement(event.getX(), event.getY());
+            }
+            break;
+        }
+
+        case MotionEvent.ACTION_POINTER_DOWN:
+            cancelTrackpadTimer();
+            cancelLongPressTimer();
+            if (_tpDragging) { _buttons = 0; postPointer(_pointerX, _pointerY, 0); _tpDragging = false; }
+            postPointer(_pointerX, _pointerY, BIT_BLUE);    // second finger → context menu
+            postPointer(_pointerX, _pointerY, 0);
+            _tpMoved = true;                                // and no click when it lifts
+            break;
+
+        case MotionEvent.ACTION_UP:
+        case MotionEvent.ACTION_CANCEL:
+            cancelTrackpadTimer();
+            cancelLongPressTimer();
+            if (_tpDragging) {
+                _buttons = 0;
+                postPointer(_pointerX, _pointerY, 0);       // end the drag
+                _tpDragging = false;
+            } else if (!_tpMoved && event.getActionMasked() == MotionEvent.ACTION_UP) {
+                // Quick tap → a click AT THE CURSOR, not at the finger. The arm is consumed
+                // here and not at DOWN: a slide emits no click, and consuming it there
+                // would silently swallow the armed button.
+                int bit = (_armedButton != 0) ? _armedButton : BIT_RED;
+                _armedButton = 0;
+                postPointer(_pointerX, _pointerY, bit);
+                postPointer(_pointerX, _pointerY, 0);
+            }
+            _buttons = 0;
+            break;
+        }
+    }
+
+    // --- long-press menu ---------------------------------------------------
+
+    private void scheduleLongPressMenu(float downX, float downY) {
+        cancelLongPressTimer();
+        if (!_longPressMenu) return;
+        _lpDownX = downX;
+        _lpDownY = downY;
+        _lpRun = () -> {
+            _lpRun = null;
+            showLongPressMenu();
+        };
+        _handler.postDelayed(_lpRun, ViewConfiguration.getLongPressTimeout());
+    }
+
+    /** A finger that travels is a gesture, not a long press. */
+    private void vetoLongPressOnMovement(float x, float y) {
+        if (_lpRun == null) return;
+        if (Math.hypot(x - _lpDownX, y - _lpDownY) > 20 * getResources().getDisplayMetrics().density)
+            cancelLongPressTimer();
+    }
+
+    private void showLongPressMenu() {
+        if (_actionMode != null) return;
+        _actionMode = startActionMode(new ActionMode.Callback() {
+            @Override
+            public boolean onCreateActionMode(ActionMode mode, Menu menu) {
+                menu.add(0, ACT_CTRL_C, 0, "CTRL+C");
+                menu.add(0, ACT_CTRL_V, 0, "CTRL+V");
+                menu.add(0, ACT_CTRL_X, 0, "CTRL+X");
+                menu.add(0, ACT_CTRL_A, 0, "CTRL+A");
+                menu.add(0, ACT_ESC, 0, "ESC");
+                menu.add(0, ACT_M_CLICK, 0, "M-Click (halos)");
+                menu.add(0, ACT_R_CLICK, 0, "R-Click");
+                menu.add(0, ACT_KEYBOARD, 0, "Keyboard");
+                menu.add(0, ACT_CANCEL, 0, "Cancel");
+                return true;
+            }
+
+            @Override public boolean onPrepareActionMode(ActionMode mode, Menu menu) { return false; }
+
+            @Override
+            public boolean onActionItemClicked(ActionMode mode, MenuItem item) {
+                switch (item.getItemId()) {
+                case ACT_CTRL_C: ctrlChord(3, 'c'); break;
+                case ACT_CTRL_V: pushAndroidClipboardIn(); ctrlChord(22, 'v'); break;
+                case ACT_CTRL_X: ctrlChord(24, 'x'); break;
+                case ACT_CTRL_A: ctrlChord(1, 'a'); break;
+                case ACT_ESC:
+                    NativeDisplay.postKey(27, KEY_DOWN, 0, 27);
+                    NativeDisplay.postKey(27, KEY_CHAR, 0, 27);
+                    NativeDisplay.postKey(27, KEY_UP, 0, 27);
+                    break;
+                case ACT_M_CLICK: clickHere(squeakBitFor(BUTTON_HALOS)); break;
+                case ACT_R_CLICK: clickHere(squeakBitFor(BUTTON_MENU)); break;
+                case ACT_KEYBOARD: if (_keyboardToggler != null) _keyboardToggler.run(); break;
+                default: break;
+                }
+                mode.finish();
+                return true;
+            }
+
+            @Override public void onDestroyActionMode(ActionMode mode) { _actionMode = null; }
+        }, ActionMode.TYPE_FLOATING);
+    }
+
+    /**
+     * Squeak sees a Ctrl chord as the CONTROL CHARACTER carrying CtrlKeyBit, with the plain
+     * letter as the Unicode value — which is exactly what XLookupString handed the VM on the
+     * X path, control character and all.
+     */
+    private void ctrlChord(int controlChar, int letter) {
+        NativeDisplay.postKey(controlChar, KEY_DOWN, 2, letter);
+        NativeDisplay.postKey(controlChar, KEY_CHAR, 2, letter);
+        NativeDisplay.postKey(controlChar, KEY_UP, 2, letter);
+        // The driver keeps the modifier word globally, so without this the NEXT tap would
+        // still be a ctrl-click. On the X path the Control_L release did it implicitly.
+        if (_pointerX >= 0) NativeDisplay.postMouse(_pointerX, _pointerY, 0, 0);
+    }
+
+    /** A complete click at the pointer, used by the menu's R-Click / M-Click items. */
+    private void clickHere(int squeakBit) {
+        if (_pointerX < 0) return;
+        pushAndroidClipboardIn();          // the image's context menu offers Paste
+        postPointer(_pointerX, _pointerY, 0);
+        postPointer(_pointerX, _pointerY, squeakBit);
+        postPointer(_pointerX, _pointerY, 0);
     }
 
     // --- keyboard ----------------------------------------------------------

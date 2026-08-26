@@ -232,7 +232,11 @@ public class XServerActivity extends Activity {
             SqueakSurfaceView surface = new SqueakSurfaceView(this);
             surface.setSurfaceReadyListener((w, h) -> bootChosenImage());
             _display = surface;
+            surface.setKeyboardToggler(this::toggleKeyboard);
             fl.addView(surface);
+            // The pointer arrow: a sibling ABOVE the surface (a SurfaceView cannot draw over
+            // its own buffer) and BELOW the pill, which addFloatingControls adds next.
+            fl.addView(surface.attachPointerOverlay(this));
             surface.requestFocus();
             // Not adjustResize: shrinking the surface for the keyboard would leave the
             // logical size behind and SurfaceFlinger would squash the world vertically.
@@ -259,11 +263,22 @@ public class XServerActivity extends Activity {
             final View dv = _display.asView();
             int viewH = dv.getHeight();
             if (viewH <= 0) return;
-            // Classic keyboard-height detection (compileSdk 29 has no WindowInsets.Type):
-            // the visible display frame shrinks by the IME height when it's up.
-            android.graphics.Rect r = new android.graphics.Rect();
-            dv.getWindowVisibleDisplayFrame(r);
-            int imeH = Math.max(0, dv.getRootView().getHeight() - r.bottom);
+            // How tall the keyboard is. The visible-frame trick is what the X path used,
+            // but it reports nothing under SOFT_INPUT_ADJUST_NOTHING — which is exactly
+            // what the native path sets, because resizing the surface would leave the
+            // logical size behind and squash the world. So ask the insets directly when
+            // the platform can answer (API 30+), and keep the old measurement as the
+            // fallback for API 28/29.
+            int imeH = 0;
+            if (Build.VERSION.SDK_INT >= 30) {
+                android.view.WindowInsets wi = dv.getRootWindowInsets();
+                if (wi != null) imeH = wi.getInsets(android.view.WindowInsets.Type.ime()).bottom;
+            }
+            if (imeH == 0) {
+                android.graphics.Rect r = new android.graphics.Rect();
+                dv.getWindowVisibleDisplayFrame(r);
+                imeH = Math.max(0, dv.getRootView().getHeight() - r.bottom);
+            }
             float ty = 0f;
             if (imeH > viewH * 0.15f) {  // keyboard is up
                 int caretY = _display.caretY();   // physical; -1 = backend cannot say
