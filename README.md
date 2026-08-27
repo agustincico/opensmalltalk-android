@@ -51,9 +51,13 @@ ever renders blank, the pill is the escape hatch — ☰ → *Load image…* alw
   in-process via JNI and launched against the chosen image. On a real phone it runs
   **4.3× the bytecodes and 6.7× the message sends** of the interpreter it replaced
   (`tinyBenchmarks`, Cuis 7.7), for about 7 MB more memory.
-- The VM renders through X11 into an **embedded X server written in Java** (a fork of
-  [android-xserver](https://github.com/ZhymabekRoman/android-xserver-enhanced)) that
-  paints into an Android view and translates touch into X input events.
+- **Two display engines.** The original one renders through X11 into an **embedded X server
+  written in Java** (a fork of
+  [android-xserver](https://github.com/ZhymabekRoman/android-xserver-enhanced)) that paints
+  into an Android view. The newer one, `vm-display-android`, is an ordinary OpenSmalltalk
+  display module that lets the VM draw **straight into the screen** — no X server, no socket,
+  no protocol parser, and about **5× the repaints**. Switch in ☰ → *Display engine*; both
+  offer the same options, zoom, trackpad, pointer and long-press menu.
 - The app adds the phone conveniences on top: the image library, the drag-and-drop
   file-in (synthesized XDND), the automatic fileout export, crash-loop protection
   against bad images, and a per-boot setup script that adapts Cuis to the phone.
@@ -71,6 +75,17 @@ cd opensmalltalk-android
 echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties   # adjust to your SDK
 JAVA_HOME=/path/to/jdk-17 ./gradlew assembleDebug
 ```
+
+There are two ways the app can put the Smalltalk world on screen, and you can build either:
+
+```bash
+JAVA_HOME=/path/to/jdk-17 ./gradlew assembleRelease                # both engines
+JAVA_HOME=/path/to/jdk-17 ./gradlew assembleRelease -PnativeOnly   # no X server at all
+```
+
+The default build ships both and lets you switch in ☰ → *Display engine*. `-PnativeOnly`
+boots straight into the X-server-free driver, drops the switch, and stops packaging what
+only the X path could use — about 13 MB less unpacked onto the device.
 
 The repo is self-contained (launcher, X server library, prebuilt native VM — no
 submodules). Toolchain: **JDK 17**, AGP 8.7.3, Gradle 8.9 (wrapper included), NDK 26,

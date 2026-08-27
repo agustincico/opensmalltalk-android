@@ -182,6 +182,27 @@ Ported after the menu, all verified on the emulator:
 hold-to-drag, a mode toggle mid-drag, surface teardown — because there is no server in between
 to notice an unmatched press: the image would simply stay in a drag forever.
 
+## Building only this engine
+
+```bash
+./gradlew assembleRelease -PnativeOnly
+```
+
+Boots straight into the driver, drops the *Display engine* row (there is nothing to switch
+to) and stops packaging what only the X path could use — the X display driver, the X-only
+plugins, GL, and some SDL/wayland leftovers nothing ever loaded. That is ~13 MB less
+unpacked onto the device.
+
+It does **not** drop libX11/libxcb: `libcairo.so.2` links against them and cairo is what
+`UnicodePlugin` needs. A genuinely X-free build has to wait for the support libraries to be
+rebuilt from source rather than taken from Termux — see [BUILDING-VM.md](BUILDING-VM.md).
+
+Two things this variant forced, both of which were latent bugs on the normal build too:
+plugins unpacked by a previous install were never removed (so the X-only ones lingered and
+the VM kept trying to open them), and the VM could start while a refresh was still rewriting
+them. Extraction now prunes what the build no longer ships, the asset marker carries the
+variant as well as the version, and the boot waits on a latch.
+
 ## What is still missing
 
 - Depths other than 32 bpp are refused (`ioHasDisplayDepth`), which every modern image is

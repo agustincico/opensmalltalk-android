@@ -609,8 +609,10 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     
     return 0;
 }
-/* Same entry point, reachable from NativeDisplayActivity. Keeping it an alias
-   rather than moving the body means the shipping X11 path is untouched. */
+/* Kept for the case where NativeDisplayActivity declares its own startVMNative:
+   a native method binds by its DECLARING class name, and today that activity simply
+   inherits XServerActivity's, so nothing calls this. It costs a few bytes and it is
+   the thing that would silently break if the inheritance ever changed. */
 JNIEXPORT jint JNICALL
 Java_au_com_darkside_x11server_NativeDisplayActivity_startVMNative(
     JNIEnv *env, jobject thiz, jstring libPath, jstring imagePath, jstring pluginsPath) {

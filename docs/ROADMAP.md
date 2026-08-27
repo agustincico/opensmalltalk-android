@@ -244,7 +244,7 @@ failed image download say why…". Still open:
   a small, well-scoped next step. Also still open: per-version LGPL **license texts**.
 - **Drop the dead ABIs:** `abiFilters` still ships `armeabi-v7a`/`x86_64` JNI wrappers
   that can never run the arm64-only VM.
-- Stale second build path (`Makefile`, hardcoded Homebrew SDK) and `jcenter()` in the
+- ~~Stale second build path (`Makefile`) and `jcenter()`~~ — both gone (2026-08-27).
   repo lists — delete/fix.
 
 ---

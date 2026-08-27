@@ -413,8 +413,10 @@ Still open, roughly by value:
    Only the ~60 X11/cairo/pango **support libraries** are still Termux prebuilts — but the
    build script now pulls its sysroot from Termux's package repo, so moving those over is a
    small next step. See `docs/BUILDING-VM.md`.
-2. **Persist UI preferences** (zoom, smooth zoom, trackpad, precise pointer,
-   pointer, clipboard, long-press) — they reset on every restart.
+2. **~~Persist UI preferences~~ — DONE 2026-08-27.** Stored per `SmalltalkDisplay.Feature`
+   name in a `display` SharedPreferences file, plus the zoom, and re-applied after the
+   backend is built (`applyStoredDisplayPreferences`). A feature that was never set keeps
+   the backend's own default, so the X path still auto-picks its zoom by dpi.
 3. **Export image** — the `.image` itself still can't leave the device (fileouts
    now auto-export to Downloads/OpenSmalltalk, and *Save Image as…* names are
    booted via the image library, so only the share-sheet/SAF copy remains).
@@ -424,9 +426,10 @@ Still open, roughly by value:
    VM (arm64-only `libsqueak.so`). Consider dropping them.
 6. **Legacy `onCreateOptionsMenu`** still exists and has diverged from the curated
    dialog; `launchChangesPicker` is dead code (its result is never handled).
-7. **`Makefile`** is a stale second build path (hardcoded Homebrew SDK path) that
-   contradicts the Gradle one — delete or fix.
-8. **`jcenter()`** is still in the repository lists (deprecated/read-only).
+7. **~~`Makefile`~~ — deleted 2026-08-27.** It was a second build path inherited from the
+   fork, pinned at v1.31/minSdk 21 with a hardcoded Homebrew SDK path, contradicting the
+   Gradle build in every particular. Nothing referenced it.
+8. **~~`jcenter()`~~ — already gone** from the repository lists.
 9. **dev-tests channel is informational** — `observe.sh` prints DEVTEST lines but a
    failing test doesn't fail the loop.
 

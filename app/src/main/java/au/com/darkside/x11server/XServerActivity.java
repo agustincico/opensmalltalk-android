@@ -26,8 +26,6 @@ import android.os.Environment;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
-import android.view.Menu;
-import android.view.MenuItem;
 import android.view.WindowManager;
 import android.view.Gravity;
 import android.view.View;
@@ -148,23 +146,8 @@ public class XServerActivity extends Activity {
 
     private static final String NOTIFICATION_CHANNEL_DEFAULT = "default";
 
-    private static final int MENU_KEYBOARD = 1;
-    private static final int MENU_IP_ADDRESS = 2;
-    private static final int MENU_ACCESS_CONTROL = 3;
-    private static final int MENU_REMOTE_LOGIN = 4;
-    private static final int MENU_TOGGLE_ARROWS = 5;
-    private static final int MENU_TOGGLE_BACKBUTTON = 6;
-    private static final int MENU_TOGGLE_TOUCHCLICKS = 7;
-    private static final int MENU_TOGGLE_WINDOWMANAGER = 8;
-    private static final int MENU_TOGGLE_ORIENTATION = 9;
-    private static final int MENU_TOGGLE_SHARED_CLIPBOARD = 10;
-    private static final int MENU_ZOOM = 11;
-    private static final int MENU_LOAD_IMAGE = 12;
-    private static final int MENU_TOGGLE_LONGPRESS = 13;
-    private static final int MENU_TOGGLE_POINTER = 14;
     private static final int ACTIVITY_ACCESS_CONTROL = 1;
     private static final int ACTIVITY_LOAD_IMAGE = 2;
-    private static final int ACTIVITY_LOAD_CHANGES = 3;
     private static final int ACTIVITY_FILE_IN = 4;
 
     private static final int DEFAULT_PORT = 6000;
@@ -416,189 +399,12 @@ public class XServerActivity extends Activity {
         manager.cancel(1);
     }
 
-    /**
-     * Called the first time a menu is needed.
-     *
-     * @param menu The options menu in which you place your items.
-     * @return True for the menu to be displayed.
-     */
-    @Override
-    public boolean onCreateOptionsMenu(Menu menu) {
-        if (_xServer == null) return false;   // legacy X-only menu; unreachable in practice
-        MenuItem item;
+    // The Android options menu that this fork came with is gone. It was unreachable
+    // (nothing opens it, the ActionBar is hidden in fullscreen) and had drifted away from
+    // the ☰ dialog that replaced it — it still offered a Window Manager that launched
+    // libwm.so against DISPLAY=127.0.0.1:0, which the X-server-free build does not even
+    // ship. showOptionsDialog() is the menu.
 
-        item = menu.add(0, MENU_KEYBOARD, 0, "Keyboard");
-        item.setIcon(android.R.drawable.ic_menu_add);
-
-        item = menu.add(0, MENU_IP_ADDRESS, 0, "IP address");
-        item.setIcon(android.R.drawable.ic_menu_info_details);
-
-        item = menu.add(0, MENU_ACCESS_CONTROL, 0, "Access control");
-        item.setIcon(android.R.drawable.ic_menu_edit);
-
-        item = menu.add(0, MENU_REMOTE_LOGIN, 0, "Remote login");
-        item.setIcon(android.R.drawable.ic_menu_upload);
-
-        item = menu.add(0, MENU_TOGGLE_ARROWS, 0, "Arrows as Mouseclicks (off)");
-        item.setIcon(android.R.drawable.star_off);
-
-        item = menu.add(0, MENU_TOGGLE_BACKBUTTON, 0, "Inhibit back button (off)");
-        item.setIcon(android.R.drawable.star_off);
-
-        item = menu.add(0, MENU_TOGGLE_TOUCHCLICKS, 0, "Touch Mouseclicks (on)");
-        item.setIcon(android.R.drawable.star_on);
-
-        item = menu.add(0, MENU_TOGGLE_WINDOWMANAGER, 0, "Window Manager (off)");
-        item.setIcon(android.R.drawable.star_on);
-
-        item = menu.add(0, MENU_TOGGLE_SHARED_CLIPBOARD, 0, "Shared Clipboard (on)");
-        item.setIcon(android.R.drawable.star_on);
-
-        item = menu.add(0, MENU_TOGGLE_LONGPRESS, 0, "Long-press menu (off)");
-        item.setIcon(android.R.drawable.star_off);
-
-        item = menu.add(0, MENU_TOGGLE_POINTER, 0, "Mouse pointer (on)");
-        item.setIcon(android.R.drawable.star_on);
-
-        item = menu.add(0, MENU_LOAD_IMAGE, 0, "Load image…");
-
-        float zoom = 1.0f;
-        try { zoom = _xServer.getScreen().getDisplayScale(); } catch (Exception e) { }
-        item = menu.add(0, MENU_ZOOM, 0, "Zoom (" + zoom + "x)");
-
-        item = menu.add(0, MENU_TOGGLE_ORIENTATION, 0, "Screen Orientation (H)");
-
-        return true;
-    }
-
-    /**
-     * Called when a menu selection has been made.
-     *
-     * @param item The menu item that was selected.
-     * @return True if the menu selection has been handled.
-     */
-    @Override
-    public boolean onOptionsItemSelected(MenuItem item) {
-        if (_xServer == null) return false;   // legacy X-only menu
-        super.onOptionsItemSelected(item);
-
-        switch (item.getItemId()) {
-            case MENU_KEYBOARD:
-                InputMethodManager imm = (InputMethodManager) getSystemService(Service.INPUT_METHOD_SERVICE);
-
-                // If anyone knows a better way to bring up the soft
-                // keyboard, I'd love to hear about it.
-                _screenView.requestFocus();
-                imm.hideSoftInputFromWindow(_screenView.getWindowToken(), 0);
-                imm.toggleSoftInput(InputMethodManager.SHOW_FORCED, 0);
-                return true;
-            case MENU_IP_ADDRESS:
-                getMenuIpAdressDialog().show();
-                return true;
-            case MENU_ACCESS_CONTROL:
-                launchAccessControlEditor();
-                return true;
-            case MENU_REMOTE_LOGIN:
-                launchSshApp();
-                return true;
-            case MENU_TOGGLE_ARROWS:
-                if (_xServer.getScreen().toggleArrowsAsButtons()) {
-                    item.setIcon(android.R.drawable.star_on);
-                    item.setTitle("Arrows as Mouseclicks (on)");
-                } else {
-                    item.setIcon(android.R.drawable.star_off);
-                    item.setTitle("Arrows as Mouseclicks (off)");
-                }
-                return true;
-            case MENU_TOGGLE_BACKBUTTON:
-                if (_xServer.getScreen().toggleInhibitBackButton()) {
-                    item.setIcon(android.R.drawable.star_on);
-                    item.setTitle("Inhibit back button (on)");
-                } else {
-                    item.setIcon(android.R.drawable.star_off);
-                    item.setTitle("Inhibit back button (off)");
-                }
-                return true;
-            case MENU_LOAD_IMAGE:
-                showLoadImageDialog();
-                return true;
-            case MENU_ZOOM: {
-                float s = _xServer.getScreen().cycleDisplayScale();
-                item.setTitle("Zoom (" + s + "x)");
-                item.setIcon(s > 1.0f ? android.R.drawable.star_on : android.R.drawable.star_off);
-                return true;
-            }
-            case MENU_TOGGLE_TOUCHCLICKS:
-                if (_xServer.getScreen().toggleEnableTouchClicks()) {
-                    item.setIcon(android.R.drawable.star_on);
-                    item.setTitle("Touch Mouseclicks (on)");
-                } else {
-                    item.setIcon(android.R.drawable.star_off);
-                    item.setTitle("Touch Mouseclicks (off)");
-                }
-                return true;
-            case MENU_TOGGLE_SHARED_CLIPBOARD:
-                if (_xServer.getScreen().toggleSharedClipboard()) {
-                    item.setIcon(android.R.drawable.star_on);
-                    item.setTitle("Shared Clipboard (on)");
-                } else {
-                    item.setIcon(android.R.drawable.star_off);
-                    item.setTitle("Shared Clipboard (off)");
-                }
-                return true;
-            case MENU_TOGGLE_LONGPRESS:
-                if (_xServer.getScreen().toggleLongPressMenu()) {
-                    item.setIcon(android.R.drawable.star_on);
-                    item.setTitle("Long-press menu (on)");
-                } else {
-                    item.setIcon(android.R.drawable.star_off);
-                    item.setTitle("Long-press menu (off)");
-                }
-                return true;
-            case MENU_TOGGLE_POINTER:
-                if (_xServer.getScreen().toggleShowPointer()) {
-                    item.setIcon(android.R.drawable.star_on);
-                    item.setTitle("Mouse pointer (on)");
-                } else {
-                    item.setIcon(android.R.drawable.star_off);
-                    item.setTitle("Mouse pointer (off)");
-                }
-                return true;
-            case MENU_TOGGLE_WINDOWMANAGER:
-                if (_windowManager == null) {
-                    try {
-                        File file = new File(getApplicationInfo().nativeLibraryDir + "/libwm.so");
-                        file.setExecutable(true); // make program executable
-                        ProcessBuilder pb = new ProcessBuilder(file.getPath());
-                        Map<String, String> env = pb.environment();
-                        env.put("DISPLAY", "127.0.0.1:0");
-                        pb.directory(new File(getApplicationInfo().dataDir)); // execute within dataDir
-                        _windowManager = pb.start();
-                        item.setIcon(android.R.drawable.star_on);
-                        item.setTitle("Window Manager (on)");
-                    } catch (IOException e) {
-                        throw new RuntimeException(e);
-                    }
-                } else {
-                    _windowManager.destroy();
-                    _windowManager = null;
-                    item.setIcon(android.R.drawable.star_off);
-                    item.setTitle("Window Manager (off)");
-                }
-                return true;
-            case MENU_TOGGLE_ORIENTATION:
-                if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
-                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_PORTRAIT);
-                    item.setTitle("Screen Orientation (V)");
-                } else {
-                    setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_LANDSCAPE);
-                    item.setTitle("Screen Orientation (H)");
-                }
-                return true;
-        }
-
-        return false;
-    }
 
     /**
      * Return a string describing the IP address(es) of this device.
@@ -1889,17 +1695,6 @@ public class XServerActivity extends Activity {
             startActivityForResult(i, ACTIVITY_LOAD_IMAGE);
         } catch (ActivityNotFoundException e) {
             Toast.makeText(this, "No file picker available.", Toast.LENGTH_LONG).show();
-        }
-    }
-
-    private void launchChangesPicker() {
-        Intent i = new Intent(Intent.ACTION_OPEN_DOCUMENT);
-        i.addCategory(Intent.CATEGORY_OPENABLE);
-        i.setType("*/*");
-        try {
-            startActivityForResult(i, ACTIVITY_LOAD_CHANGES);
-        } catch (ActivityNotFoundException e) {
-            restartApp();
         }
     }
 

@@ -250,8 +250,14 @@ public class SqueakSurfaceView extends SurfaceView
                         _pointerY * _surfaceH / (float) _logicalH);
     }
 
-    /** Release anything still held, so a button can never be left down in the image. */
+    /**
+     * Release anything still held, so a button can never be left down in the image, and
+     * forget the gesture that held it — otherwise the next ACTION_UP would release a button
+     * this one already let go of.
+     */
     private void releaseHeldButtons() {
+        _downButton = BIT_RED;
+        _tpDragging = false;
         if (_buttons == 0) return;
         _buttons = 0;
         if (_pointerX >= 0) NativeDisplay.postMouse(_pointerX, _pointerY, 0, 0);
