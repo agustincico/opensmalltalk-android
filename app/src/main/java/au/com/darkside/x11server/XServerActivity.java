@@ -115,7 +115,9 @@ public class XServerActivity extends Activity {
     static final String NATIVE_DISPLAY_MARKER = ".native_display";
 
     protected boolean useNativeDisplay() {
-        return new File(getFilesDir(), NATIVE_DISPLAY_MARKER).exists();
+        // The -PnativeOnly build has no X server to fall back to.
+        return BuildConfig.NATIVE_DISPLAY_ONLY
+                || new File(getFilesDir(), NATIVE_DISPLAY_MARKER).exists();
     }
 
     private XServer _xServer;          // null when the native display is in use
@@ -124,6 +126,14 @@ public class XServerActivity extends Activity {
     private SmalltalkDisplay _display;
     private boolean _nativeDisplay;    // true = vm-display-android, no X server at all
     private volatile boolean _vmStarted;
+    /**
+     * Raised when the plugins have finished being unpacked. The VM dlopens them by path the
+     * moment it starts, and a refresh rewrites all of them, so starting before this is a race
+     * the VM loses — it reports plugins as failing to load when they are merely still being
+     * copied. It used to be masked by the files already being in place.
+     */
+    private final java.util.concurrent.CountDownLatch _pluginsReady =
+            new java.util.concurrent.CountDownLatch(1);
     private boolean _controlsExpanded = false;  // floating menu drawer state
     private WakeLock _wakeLock;
 
@@ -342,6 +352,18 @@ public class XServerActivity extends Activity {
     @Override
     public void onPause() {
         super.onPause();
+
+        // Leaving the app is not a failed boot. The crash-loop guard exists for a VM that
+        // aborts the process on a bad image — and in that case this never runs — but it
+        // also fired for anyone who simply backgrounded the app within the seven seconds
+        // the healthy-boot timer takes, and the cost of that false positive is losing the
+        // chosen image and being sent back to the chooser.
+        if (_vmRunning) {
+            File bootPending = new File(getFilesDir(), ".boot_pending");
+            if (bootPending.exists() && bootPending.delete())
+                Log.i(TAG, "left the app with the VM running; cleared .boot_pending");
+        }
+
         PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, getIntent(), PendingIntent.FLAG_UPDATE_CURRENT);
         Notification.Builder nb = new Notification.Builder(this)
             .setSmallIcon(android.R.drawable.ic_menu_view)
@@ -951,13 +973,20 @@ public class XServerActivity extends Activity {
      */
     private void launchVm(String libPath, String imagePath, String pluginsPath,
                           File bootPending, File filesDir) {
-        if (!_nativeDisplay) {
-            onVmLaunchResult(startVMNative(libPath, imagePath, pluginsPath), bootPending, filesDir);
-            return;
+        if (_nativeDisplay) {
+            ensureNativeDisplayDriver();
+            NativeDisplay.enable(true);
         }
-        ensureNativeDisplayDriver();
-        NativeDisplay.enable(true);
+        // Off the UI thread in both modes: startVMNative dlopens some sixty libraries
+        // before it hands off to the VM's own thread, and it first has to wait for those
+        // libraries to exist.
         new Thread(() -> {
+            try {
+                if (!_pluginsReady.await(30, java.util.concurrent.TimeUnit.SECONDS))
+                    Log.w(TAG, "plugins still unpacking after 30 s; starting anyway");
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
             int res = startVMNative(libPath, imagePath, pluginsPath);
             runOnUiThread(() -> onVmLaunchResult(res, bootPending, filesDir));
         }, "squeak-boot").start();
@@ -1146,8 +1175,10 @@ public class XServerActivity extends Activity {
         labels.add("Screen orientation");
         actions.add(this::toggleOrientation);
 
-        labels.add("Display engine: " + (_nativeDisplay ? "native (beta)" : "X server"));
-        actions.add(this::showDisplayEngineDialog);
+        if (!BuildConfig.NATIVE_DISPLAY_ONLY) {   // nothing to switch to in that build
+            labels.add("Display engine: " + (_nativeDisplay ? "native (beta)" : "X server"));
+            actions.add(this::showDisplayEngineDialog);
+        }
 
         new AlertDialog.Builder(this)
                 .setTitle("Options")
@@ -1931,12 +1962,22 @@ public class XServerActivity extends Activity {
      */
     private static final String ASSET_VERSION_FILE = ".asset_version";
 
-    private int unpackedAssetVersion() {
+    /**
+     * What was last unpacked. The version alone is not enough: the -PnativeOnly build ships
+     * fewer plugins under the SAME version, so the tag carries the variant too — otherwise
+     * switching between the two would leave the other one's plugins behind.
+     */
+    private String currentAssetTag() {
+        int v = currentAppVersion();
+        return v < 0 ? null : (v + (BuildConfig.NATIVE_DISPLAY_ONLY ? "n" : "f"));
+    }
+
+    private String unpackedAssetTag() {
         File f = new File(getFilesDir(), ASSET_VERSION_FILE);
         try (java.io.BufferedReader r = new java.io.BufferedReader(new java.io.FileReader(f))) {
-            return Integer.parseInt(r.readLine().trim());
+            return r.readLine().trim();
         } catch (Exception e) {
-            return -1;
+            return null;
         }
     }
 
@@ -1948,9 +1989,9 @@ public class XServerActivity extends Activity {
         }
     }
 
-    private void recordUnpackedAssetVersion(int version) {
+    private void recordUnpackedAssetVersion(String tag) {
         try (FileOutputStream out = new FileOutputStream(new File(getFilesDir(), ASSET_VERSION_FILE))) {
-            out.write(String.valueOf(version).getBytes("UTF-8"));
+            out.write(tag.getBytes("UTF-8"));
         } catch (Exception e) {
             Log.w(TAG, "could not record unpacked asset version", e);
         }
@@ -1958,9 +1999,9 @@ public class XServerActivity extends Activity {
 
     /** True when filesDir holds assets from a different release than the one running. */
     private boolean assetsAreStale() {
-        int cur = currentAppVersion();
-        int had = unpackedAssetVersion();
-        boolean stale = cur < 0 || had != cur;
+        String cur = currentAssetTag();
+        String had = unpackedAssetTag();
+        boolean stale = cur == null || !cur.equals(had);
         // Logged because this decides whether the plugins match the VM, and a
         // release build cannot be inspected with run-as when it goes wrong.
         Log.i(TAG, "assets: unpacked=" + had + " running=" + cur
@@ -1971,6 +2012,7 @@ public class XServerActivity extends Activity {
     private void extractPlugins() {
         final boolean refresh = assetsAreStale();
         new Thread(() -> {
+        try {
         final String assetSubDir = "plugins";
         File pluginsDir = new File(getFilesDir(), assetSubDir);
 
@@ -2003,6 +2045,24 @@ public class XServerActivity extends Activity {
         } catch (IOException e) {
             runOnUiThread(() -> appendLog("❌ ERROR: No se pudo listar assets/" + assetSubDir + ": " + e.getMessage()));
             return;
+        }
+
+        // 2b. Drop anything left over that this build no longer ships. Extracting is not
+        // enough: a plugin the previous install unpacked stays in filesDir forever, and on
+        // the X11-free build the X plugins would still be there — dead weight that the VM
+        // then tries (and fails) to dlopen, because their libraries are gone too.
+        if (refresh) {
+            java.util.Set<String> shipped = new java.util.HashSet<>(java.util.Arrays.asList(assetFiles));
+            File[] present = pluginsDir.listFiles();
+            int pruned = 0;
+            if (present != null)
+                for (File f : present)
+                    if (f.isFile() && !shipped.contains(f.getName()) && f.delete()) pruned++;
+            if (pruned > 0) {
+                final int n = pruned;
+                Log.i(TAG, "plugins: removed " + n + " no longer shipped by this build");
+                runOnUiThread(() -> appendLog("🧹 " + n + " plugin(s) obsoleto(s) eliminado(s)"));
+            }
         }
 
         // 3. Iterar y extraer cada archivo
@@ -2067,12 +2127,15 @@ public class XServerActivity extends Activity {
             }
         });
 
+        } finally {
+            _pluginsReady.countDown();
+        }
     }).start();
 }
 
 private void extractAssets() {
     final boolean refresh = assetsAreStale();
-    final int version = currentAppVersion();
+    final String version = currentAssetTag();
     new Thread(() -> {
         try {
             String[] files = getAssets().list(""); // lista la raíz de assets
@@ -2115,7 +2178,7 @@ private void extractAssets() {
             // Stamp the version only after a refresh actually ran, so a failure
             // part-way through is retried on the next launch rather than being
             // recorded as done.
-            if (refresh && version > 0) recordUnpackedAssetVersion(version);
+            if (refresh && version != null) recordUnpackedAssetVersion(version);
         } catch (Exception e) {
             final String error = e.getMessage();
             runOnUiThread(() -> appendLog("ERROR extractAssets: " + error));

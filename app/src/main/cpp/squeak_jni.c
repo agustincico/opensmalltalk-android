@@ -469,10 +469,16 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
         "libXrender.so",
         "libXrandr.so",
 
-        "XDisplayControlPlugin.so",
+
         "vm-sound-pulse.so",
         "vm-sound-null.so",
         "vm-display-X11.so",
+        // These two resolve symbols FROM the X display module (displayName,
+        // setCompositionFocus), so they have to be loaded after it. Listed before it,
+        // both failed with "cannot locate symbol" on every launch -- which the
+        // double dlerror() call above reported as "(null)" for years.
+        "XDisplayControlPlugin.so",
+        "ImmX11Plugin.so",
         "vm-display-null.so",
         "VectorEnginePlugin.so",
         "UUIDPlugin.so",
@@ -481,7 +487,7 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
         "SHA2Plugin.so",
         "MD5Plugin.so",
         "LocalePlugin.so",
-        "ImmX11Plugin.so",
+
         "FileAttributesPlugin.so",
         "DESPlugin.so",
         "ClipboardExtendedPlugin.so",
@@ -512,13 +518,25 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
         err_append("...");
 
         // Usar dlopen con RTLD_GLOBAL para cargar en el espacio de nombres principal
+        // A build made with -PnativeOnly ships no X display driver and no X-only
+        // plugins, so several names on this list simply are not there. That is not
+        // a failure and should not read like one in the log.
+        if (access(dep_full_path, R_OK) != 0) {
+            LOG("omitido (no incluido en esta variante): %s", dep_name);
+            continue;
+        }
+
         void *dep_handle = dlopen(dep_full_path, RTLD_NOW | RTLD_GLOBAL);
         
         if (!dep_handle) {
-            // Si falla, lo registramos. Squeak fallará después, pero el log lo explica.
-            snprintf(temp, sizeof(temp), "FALLO: %s\n", dlerror());
+            // dlerror() CLEARS the error, so it must be read once. Calling it twice --
+            // as this did -- made every one of these lines report "(null)" and hid the
+            // actual reason a plugin would not load.
+            const char *why = dlerror();
+            if (!why) why = "(sin detalle)";
+            snprintf(temp, sizeof(temp), "FALLO: %s\n", why);
             err_append(temp);
-            LOG("FALLO cargando %s: %s", dep_name, dlerror());  // ← AGREGAR
+            LOG("FALLO cargando %s: %s", dep_name, why);
         } else {
             err_append("OK\n");
             LOG("OK: %s", dep_name);  // ← AGREGAR

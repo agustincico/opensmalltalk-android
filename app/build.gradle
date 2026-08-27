@@ -1,5 +1,26 @@
 apply plugin: 'com.android.application'
 
+// Build the X-server-free variant:  ./gradlew assembleRelease -PnativeOnly
+//
+// Same app, same signing key, but the embedded X server is not an option: the app
+// boots straight into vm-display-android and the "Display engine" row disappears.
+// It also stops packaging what only the X path could use — the X display driver,
+// the X-only plugins, GL, and some SDL/wayland leftovers that nothing has ever
+// loaded — which is 13 MB of the APK.
+//
+// It does NOT drop libX11/libxcb: libcairo.so.2 links against them and cairo is
+// what UnicodePlugin needs, so a genuinely X-free build has to wait for the
+// support libraries to be rebuilt from source (see docs/BUILDING-VM.md).
+def nativeOnly = project.hasProperty('nativeOnly')
+def xOnlyArtifacts = [
+        'vm-display-X11.so', 'ImmX11Plugin.so', 'XDisplayControlPlugin.so',
+        'ClipboardExtendedPlugin.so', 'B3DAcceleratorPlugin.so',
+        'libGL.so', 'libGL.so.1', 'libGLX.so.0', 'libGLdispatch.so.0',
+        'libICE.so', 'libSM.so', 'libXcursor.so', 'libXfixes.so', 'libXi.so',
+        'libXss.so', 'libSDL2-2.0.so', 'libdecor-0.so', 'libwayland-client.so',
+        'libwayland-cursor.so', 'libwayland-egl.so', 'libxkbcommon.so', 'libwm.so',
+]
+
 android {
     // The R class / resources package. Kept as the fork's original Java package
     // (the sources live there); the PUBLIC identity is applicationId below.
@@ -18,7 +39,10 @@ android {
         // Google Play requires new apps/updates to target API 35 (Android 15).
         targetSdk 35
         versionCode 46
-        versionName "1.46"
+        versionName nativeOnly ? "1.46-native" : "1.46"
+
+        // Read by XServerActivity.useNativeDisplay().
+        buildConfigField "boolean", "NATIVE_DISPLAY_ONLY", "${nativeOnly}"
 
         ndk {
             // arm64 only: libsqueak.so (the VM) exists for arm64-v8a alone, so an
@@ -70,8 +94,19 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig true
+    }
+
+    // assets/plugins/ is extracted to filesDir at first run, so the X-only modules
+    // have to be kept out of the APK here rather than merely left unloaded.
+    androidResources {
+        if (nativeOnly) ignoreAssetsPatterns.addAll(xOnlyArtifacts)
+    }
+
     packaging {
         jniLibs {
+            if (nativeOnly) excludes.addAll(xOnlyArtifacts.collect { "**/$it" })
             pickFirsts += ['lib/*/libc++_shared.so']
             // The prebuilt VM/plugins must not be stripped: they are shipped as
             // built (and stripping them here would also rewrite their ELF layout).

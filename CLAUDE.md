@@ -152,7 +152,21 @@ From the README "Known limitations" plus what the loop surfaced:
    nothing resizes; no further resize until a rotation. Fix: `ScreenView` polls
    post-startup until a viewable top-level window exists, then applies the same
    resize a rotation does — once. Verified: world fills the screen from launch.
-2. **~~`XDisplayControlPlugin.so` fails to load~~ — fixed 2026-08-12 by the NDK rebuild.**
+2. **`XDisplayControlPlugin.so` + `ImmX11Plugin.so` still fail to load — DIAGNOSED 2026-08-26,
+   second cause found.** The over-linking below was real and is fixed, but they never loaded
+   anyway. Two more reasons, both now proven from the device: (a) `deps_to_load[]` listed them
+   BEFORE `vm-display-X11.so`, whose symbols they need — fixed, the log now shows
+   `OK: vm-display-X11.so` first; (b) they still fail with `cannot locate symbol "displayName"`
+   / `"setCompositionFocus"`, which `vm-display-X11.so` does export, because **they do not name
+   it in their `NEEDED`** and bionic will not resolve against an RTLD_GLOBAL library for them.
+   The fix is the same `patchelf --add-needed` trick `build-vm-android.sh` already applies for
+   `libsqueak.so` — applied to these two, pointing at `vm-display-X11.so`. Needs a plugin
+   rebuild, so it is not done yet. Neither plugin is used by the app.
+   **Why nobody saw the reason for years:** the loader logged `dlerror()` twice in one
+   statement, and the second call returns NULL because the first consumed the error — so every
+   failure printed `(null)`. Fixed; the message above is what it says now.
+
+   The original entry: **~~over-linking~~ — fixed 2026-08-12 by the NDK rebuild.**
    Cause was over-linking: `NEEDED` listed `libSM.so`, `libICE.so`,
    `libandroid-execinfo.so`, none shipped in `assets/plugins/`. Rebuilding the plugin from
    the pinned upstream tree (`scripts/build-vm-android.sh`) drops all three; its `NEEDED`
