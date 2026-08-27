@@ -114,6 +114,15 @@ public class XServerActivity extends Activity {
      */
     static final String NATIVE_DISPLAY_MARKER = ".native_display";
 
+    /**
+     * Where the display preferences live. They used to be lost on every restart, which is
+     * worse than it sounds: switching engines, loading an image and a crash-loop recovery
+     * all restart the app, so anyone who set up zoom and trackpad had to set them again.
+     * Stored per feature name so the two backends share whatever they both support.
+     */
+    private static final String PREFS_DISPLAY = "display";
+    private static final String PREF_ZOOM = "zoom";
+
     protected boolean useNativeDisplay() {
         // The -PnativeOnly build has no X server to fall back to.
         return BuildConfig.NATIVE_DISPLAY_ONLY
@@ -257,6 +266,8 @@ public class XServerActivity extends Activity {
             _display = new X11Display(_screenView);
             fl.addView(_screenView);
         }
+
+        applyStoredDisplayPreferences();
 
         // On-screen access to the options menu + soft keyboard. Phones have no
         // hardware MENU key and the ActionBar is hidden in fullscreen, so without
@@ -1110,6 +1121,31 @@ public class XServerActivity extends Activity {
         fl.addView(bar, lp);
     }
 
+    /** Put back what the user chose last time, for whichever backend is running now. */
+    private void applyStoredDisplayPreferences() {
+        if (_display == null) return;
+        SharedPreferences prefs = getSharedPreferences(PREFS_DISPLAY, MODE_PRIVATE);
+
+        float zoom = prefs.getFloat(PREF_ZOOM, 0f);
+        if (zoom > 0f && _display.supports(SmalltalkDisplay.Feature.ZOOM))
+            _display.setDisplayScale(zoom);
+
+        for (SmalltalkDisplay.Feature f : SmalltalkDisplay.Feature.values()) {
+            if (f == SmalltalkDisplay.Feature.ZOOM || !_display.supports(f)) continue;
+            if (!prefs.contains(f.name())) continue;   // never set: leave the backend's default
+            if (prefs.getBoolean(f.name(), false) != _display.isEnabled(f))
+                _display.toggle(f);
+        }
+    }
+
+    private void rememberFeature(SmalltalkDisplay.Feature f, boolean on) {
+        getSharedPreferences(PREFS_DISPLAY, MODE_PRIVATE).edit().putBoolean(f.name(), on).apply();
+    }
+
+    private void rememberZoom(float scale) {
+        getSharedPreferences(PREFS_DISPLAY, MODE_PRIVATE).edit().putFloat(PREF_ZOOM, scale).apply();
+    }
+
     private Button makeIconButton(String glyph) {
         Button b = new Button(this);
         b.setText(glyph);
@@ -1200,6 +1236,7 @@ public class XServerActivity extends Activity {
         labels.add(label + ": " + (_display.isEnabled(f) ? "on" : "off"));
         actions.add(() -> {
             boolean on = _display.toggle(f);
+            rememberFeature(f, on);
             String msg = on ? onMsg : offMsg;
             if (msg != null) Toast.makeText(this, msg, toastLength).show();
         });
@@ -1268,7 +1305,10 @@ public class XServerActivity extends Activity {
         }
         new AlertDialog.Builder(this)
                 .setTitle(annotateSharpness ? "Zoom — whole numbers are sharpest" : "Zoom")
-                .setItems(labels, (dialog, which) -> _display.setDisplayScale(levels[which]))
+                .setItems(labels, (dialog, which) -> {
+                    _display.setDisplayScale(levels[which]);
+                    rememberZoom(levels[which]);
+                })
                 .setNegativeButton("Close", null)
                 .show();
     }

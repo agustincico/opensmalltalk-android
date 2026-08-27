@@ -254,6 +254,18 @@ for lib in libandroid-shmem.so libXrandr.so; do
 		|| patchelf --add-needed "$lib" "$DISPLAY_SO"
 done
 
+# Two plugins resolve symbols FROM the X display module (displayName,
+# setCompositionFocus) without naming it, which glibc tolerates through the
+# RTLD_GLOBAL group and Bionic does not: both failed to dlopen on every launch
+# with "cannot locate symbol", for as long as the app has existed. Same remedy
+# as libsqueak.so above -- say what you depend on.
+for plug in XDisplayControlPlugin ImmX11Plugin; do
+	PLUG_SO="$(find "$B" -name "$plug.so" | head -1)"
+	[ -n "$PLUG_SO" ] || continue
+	patchelf --print-needed "$PLUG_SO" | grep -q '^vm-display-X11\.so$' \
+		|| patchelf --add-needed vm-display-X11.so "$PLUG_SO"
+done
+
 echo
 echo "==> VM:      $B/squeak"
 echo "==> plugins: $(find "$B" -name '*.so' | wc -l | tr -d ' ') modules"

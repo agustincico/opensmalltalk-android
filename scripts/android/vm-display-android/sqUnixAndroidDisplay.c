@@ -102,10 +102,6 @@ static unsigned lastPostMSecs = 0;
 
 static void postPendingFrame(void);	/* defined with the drawing code below */
 
-/* Repaint the whole surface on every post instead of just the damage. See the
-   comment in postPendingFrame: with ANativeWindow_lock this is the cheaper of
-   the two. Kept as a switch because the trade-off is device-dependent. */
-static int fullRepaint = 1;
 
 /* dropped files, read by the VM through these two globals (see SqDisplay.h) */
 static char *dropFileName = 0;
@@ -427,8 +423,9 @@ postPendingFrame(void)
      so a small damage rectangle makes the system copy nearly the whole screen --
      a 200x40 update cost MORE than a full-screen one (28 ms vs 21 ms). Since the
      complete Display bits are in hand anyway, claim the whole surface (nothing to
-     preserve, no copy-back) and repaint it ourselves. */
-  if (fullRepaint) { l = 0; t = 0; r = w; b = h; }
+     preserve, no copy-back) and repaint it ourselves. The damage rectangle above is
+     still worth accumulating: it is what tells us there is anything to post at all. */
+  l = 0; t = 0; r = w; b = h;
 
   dirty.left = l;  dirty.right = r;  dirty.top = t;  dirty.bottom = b;
   if (ANativeWindow_lock(nativeWindow, &buf, &dirty) != 0) {

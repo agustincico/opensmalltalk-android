@@ -359,40 +359,40 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     const char *plugins_path = (*env)->GetStringUTFChars(env, pluginsPath, 0);
     
     LOG("Parametros recibidos");
-    LOG("lib=%s", lib);           // ← AGREGAR
-    LOG("image=%s", image);       // ← AGREGAR
-    LOG("plugins=%s", plugins_path); // ← AGREGAR
+    LOG("lib=%s", lib);
+    LOG("image=%s", image);
+    LOG("plugins=%s", plugins_path);
     
     snprintf(last_error, sizeof(last_error), "Iniciando...\n");
-    LOG("last_error inicializado");  // ← AGREGAR
+    LOG("last_error inicializado");
     
     char lib_dir_temp[512];
     char temp[512];
     
-    LOG("Variables locales creadas");  // ← AGREGAR
+    LOG("Variables locales creadas");
     
     // 1. Obtener Native Lib Dir
     snprintf(lib_dir_temp, sizeof(lib_dir_temp), "%s", lib);
-    LOG("lib_dir_temp copiado");  // ← AGREGAR
+    LOG("lib_dir_temp copiado");
     
     char *last_slash_lib = strrchr(lib_dir_temp, '/');
     if (last_slash_lib) *last_slash_lib = '\0';
     snprintf(g_lib_dir, sizeof(g_lib_dir), "%s", lib_dir_temp);
     
-    LOG("g_lib_dir=%s", g_lib_dir);  // ← AGREGAR
+    LOG("g_lib_dir=%s", g_lib_dir);
     
     // 2. Obtener Files Dir
     snprintf(g_files_dir, sizeof(g_files_dir), "%s", image);
     char *image_name = strrchr(g_files_dir, '/');
     if (image_name) *image_name = '\0';
     
-    LOG("g_files_dir=%s", g_files_dir);  // ← AGREGAR
+    LOG("g_files_dir=%s", g_files_dir);
     
     // 3. Guardar image path
     snprintf(g_image_path, sizeof(g_image_path), "%s", image);
     
-    LOG("g_image_path=%s", g_image_path);  // ← AGREGAR
-    LOG("Iniciando carga de dependencias");  // ← AGREGAR
+    LOG("g_image_path=%s", g_image_path);
+    LOG("Iniciando carga de dependencias");
     
     // ... resto del código con las dependencias
     
@@ -439,7 +439,7 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     
     // Lista de todas las librerías dependientes encontradas en el readelf
 
-    LOG("Iniciando precarga de dependencias (plugins)");  // ← AGREGAR
+    LOG("Iniciando precarga de dependencias (plugins)");
 
     const char *deps_to_load[] = {
   
@@ -456,7 +456,7 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     
         "libXau.so", 
         "libGLdispatch.so.0",
-        "libsqueak_jni.so", 
+ 
         "libandroid-shmem.so", 
         "libXdmcp.so",
         "libxcb.so",
@@ -500,31 +500,29 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
 
     err_append("Iniciando precarga de dependencias...\n");
     
-    LOG("Array de dependencias creado");  // ← AGREGAR
 
     for (int i = 0; deps_to_load[i] != NULL; i++) {
         const char *dep_name = deps_to_load[i];
         char dep_full_path[512];
         
-        LOG("Iteración %d: %s", i, dep_name);  // ← AGREGAR
-        
         // Construir la ruta completa: /ruta/a/plugins/libX.so
         snprintf(dep_full_path, sizeof(dep_full_path), "%s/%s", plugins_path, dep_name);
         
-        LOG("Ruta completa: %s", dep_full_path);  // ← AGREGAR
-        
-        err_append("Cargando: ");
-        err_append(dep_name);
-        err_append("...");
-
-        // Usar dlopen con RTLD_GLOBAL para cargar en el espacio de nombres principal
         // A build made with -PnativeOnly ships no X display driver and no X-only
         // plugins, so several names on this list simply are not there. That is not
-        // a failure and should not read like one in the log.
+        // a failure and should not read like one in the log -- nor leave a dangling
+        // "Cargando: X..." with no outcome in the diagnostics buffer.
         if (access(dep_full_path, R_OK) != 0) {
             LOG("omitido (no incluido en esta variante): %s", dep_name);
             continue;
         }
+
+        err_append("Cargando: ");
+        err_append(dep_name);
+        err_append("...");
+
+        // RTLD_GLOBAL: the plugins resolve each other's symbols through the process
+        // namespace, so a module must be visible to whatever is loaded after it.
 
         void *dep_handle = dlopen(dep_full_path, RTLD_NOW | RTLD_GLOBAL);
         
@@ -539,12 +537,11 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
             LOG("FALLO cargando %s: %s", dep_name, why);
         } else {
             err_append("OK\n");
-            LOG("OK: %s", dep_name);  // ← AGREGAR
         }
     }
 
     err_append("Precarga terminada.\n");
-    LOG("Loop de precarga terminado");  // ← AGREGAR
+    LOG("Loop de precarga terminado");
     // ----------------------------------------------------
     // FIN: CARGA EXPLÍCITA DE DEPENDENCIAS
     // ----------------------------------------------------
@@ -580,30 +577,30 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     }
     err_append("main() encontrado!\n");
 
-    LOG("Preparando para lanzar thread de VM");  // ← AGREGAR
+    LOG("Preparando para lanzar thread de VM");
     err_append("Lanzando thread...\n");
 
     // Crear thread nativo para la VM
     pthread_t thread;
-    LOG("Antes de pthread_create");  // ← AGREGAR
+    LOG("Antes de pthread_create");
 
     int ret = pthread_create(&thread, NULL, run_squeak_thread, NULL);
 
-    LOG("pthread_create retornó: %d", ret);  // ← AGREGAR
+    LOG("pthread_create retornó: %d", ret);
 
     if (ret != 0) {
-        LOG("ERROR creando thread: %d", ret);  // ← AGREGAR
+        LOG("ERROR creando thread: %d", ret);
         // Manejo de error de pthread_create
     } else {
-        LOG("Thread creado exitosamente");  // ← AGREGAR
+        LOG("Thread creado exitosamente");
     }
 
     pthread_detach(thread);
-    LOG("Thread detached");  // ← AGREGAR
+    LOG("Thread detached");
 
     err_append("Thread lanzado! VM ejecutándose en background.\n");
 
-    LOG("Liberando strings JNI");  // ← AGREGAR
+    LOG("Liberando strings JNI");
     
     // Liberar recursos JNI
     (*env)->ReleaseStringUTFChars(env, libPath, lib);
