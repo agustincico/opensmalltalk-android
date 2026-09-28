@@ -433,6 +433,24 @@ Still open, roughly by value:
 9. **dev-tests channel is informational** — `observe.sh` prints DEVTEST lines but a
    failing test doesn't fail the loop.
 
+## The test emulator is API 30 — one version below where modern checks begin
+
+**Learned the hard way, 2026-09-28.** `onPause` had been creating a `PendingIntent`
+without `FLAG_IMMUTABLE` since the fork. From **Android 12**, an app targeting 31 or above
+that does this gets an `IllegalArgumentException` — thrown inside `onPause`, so the app
+died with *"Unable to pause activity"* **every time it went to the background**. We have
+targeted 31+ since v1.45.
+
+Nobody saw it because the check is enforced by the **device**, not the target level, and
+`cuis-arm64` (the AVD every test in this file runs on) is **API 30**. One version below.
+
+The lesson generalises: behaviour changes gate on `min(device API, targetSdk)`, so an API 30
+emulator cannot see anything Android 12, 13, 14, 15 or 16 introduced — scoped storage
+tightening, notification permission, foreground-service types, predictive back,
+edge-to-edge. **Before shipping a targetSdk bump, run on an emulator at or above that
+level.** `ost-16k` (API 35, 16 KB pages) exists for this; it needs a couple of GB free,
+which this Mac often does not have.
+
 Non-issues (benign, ignore): `pthread_setschedparam failed: Operation not
 permitted` (VM can't get realtime prio; falls back to itimer) and
 `Xlib: extension "RANDR" missing` (the embedded X server has no RANDR).
