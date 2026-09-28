@@ -371,11 +371,18 @@ public class XServerActivity extends Activity {
                 Log.i(TAG, "left the app with the VM running; cleared .boot_pending");
         }
 
-        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, getIntent(), PendingIntent.FLAG_UPDATE_CURRENT);
+        // FLAG_IMMUTABLE is not optional: from Android 12, an app targeting 31 or above
+        // that creates a PendingIntent without saying immutable or mutable gets an
+        // IllegalArgumentException — thrown here, inside onPause, which crashes the app
+        // with "Unable to pause activity" every time it goes to the background. It went
+        // unnoticed because the check is enforced by the DEVICE, and the emulator this
+        // project tests on is API 30, one version below where it starts.
+        PendingIntent pendingIntent = PendingIntent.getActivity(this, 0, getIntent(),
+                PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
         Notification.Builder nb = new Notification.Builder(this)
             .setSmallIcon(android.R.drawable.ic_menu_view)
-            .setContentTitle("Running!")
-            .setContentText("XServer running in background.")
+            .setContentTitle("OpenSmalltalk")
+            .setContentText("Your image is still running.")
             .setContentIntent(pendingIntent)
             .setOngoing(true);
 
@@ -396,7 +403,11 @@ public class XServerActivity extends Activity {
         NotificationManager manager = (NotificationManager) getSystemService(Context.NOTIFICATION_SERVICE);
         manager.notify(1, nb.build());
 
-        _wakeLock.release();
+        // Guarded: releasing a lock that is not held throws, and onPause can run without a
+        // matching onResume (a configuration change, or a pause that crashed before
+        // acquiring). One unbalanced release would then become a second crash on top of
+        // whatever caused the first.
+        if (_wakeLock != null && _wakeLock.isHeld()) _wakeLock.release();
     }
 
     /**
