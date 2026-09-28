@@ -22,6 +22,16 @@ static char g_lib_dir[512] = "";    // Directorio de la librería nativa del APK
 static char g_files_dir[512] = ""; // Directorio de archivos de la app (/data/data/pkg/files)
 static int g_native_display = 0;   // 1 = render with vm-display-android (no X server)
 static JavaVM *g_jvm = NULL;       // for calling back into Java from the VM thread
+static void nd_vm_exiting(void);    // atexit hook; defined with the JNI bridge below
+/*
+ * NativeDisplay, held as a global ref taken in JNI_OnLoad.
+ *
+ * It cannot be looked up later with FindClass: a thread attached with
+ * AttachCurrentThread gets the SYSTEM class loader, which knows nothing about the
+ * app's classes, so FindClass simply fails there. JNI_OnLoad runs on the thread that
+ * called System.loadLibrary, which has the right loader.
+ */
+static jclass g_nativeDisplayClass = NULL;
 
 /*
  * Append to last_error, TRUNCATING instead of overflowing.
@@ -180,6 +190,8 @@ void* run_squeak_thread(void* arg) {
 
     LOG("Llamando a g_squeak_main() con plugins: %s", plugins_path);
 
+    atexit(nd_vm_exiting);
+
     int result = g_squeak_main(argc, argv);
     
     // NOTA: Si llega aquí, la VM terminó "limpiamente" (o después de un fallo capturado)
@@ -223,18 +235,45 @@ static void nd_clipboard_written(const char *utf8) {
         if ((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) return;
         attached = 1;
     }
-    jclass cls = (*env)->FindClass(env, "au/com/darkside/x11server/NativeDisplay");
-    if (cls) {
-        jmethodID mid = (*env)->GetStaticMethodID(env, cls, "onImageWroteClipboard",
+    if (g_nativeDisplayClass) {
+        jmethodID mid = (*env)->GetStaticMethodID(env, g_nativeDisplayClass,
+                                                  "onImageWroteClipboard",
                                                   "(Ljava/lang/String;)V");
         if (mid) {
             jstring js = (*env)->NewStringUTF(env, utf8);
             if (js) {
-                (*env)->CallStaticVoidMethod(env, cls, mid, js);
+                (*env)->CallStaticVoidMethod(env, g_nativeDisplayClass, mid, js);
                 (*env)->DeleteLocalRef(env, js);
             }
         }
-        (*env)->DeleteLocalRef(env, cls);
+    }
+    if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
+    if (attached) (*g_jvm)->DetachCurrentThread(g_jvm);
+}
+
+/*
+ * The image quitting ("Save image and quit") ends in exit(), which takes the whole
+ * Android process with it -- the app simply vanished to the launcher. An atexit
+ * handler runs first and lets Java put the chooser back up.
+ *
+ * It must do its work SYNCHRONOUSLY: posting to the UI thread would lose the race
+ * against exit(). And it is registered here rather than in the display driver so it
+ * covers both display backends, since the exit path is the VM's, not the driver's.
+ */
+static void nd_vm_exiting(void) {
+    JNIEnv *env = NULL;
+    int attached = 0;
+    if (!g_jvm) return;
+    LOG("la VM esta saliendo (exit); avisando a la app");
+    if ((*g_jvm)->GetEnv(g_jvm, (void **)&env, JNI_VERSION_1_6) != JNI_OK) {
+        if ((*g_jvm)->AttachCurrentThread(g_jvm, &env, NULL) != JNI_OK) return;
+        attached = 1;
+    }
+    if (g_nativeDisplayClass) {
+        jmethodID mid = (*env)->GetStaticMethodID(env, g_nativeDisplayClass, "onVmQuit", "()V");
+        if (mid) (*env)->CallStaticVoidMethod(env, g_nativeDisplayClass, mid);
+    } else {
+        LOG("no se pudo avisar: NativeDisplay no quedo cacheada en JNI_OnLoad");
     }
     if ((*env)->ExceptionCheck(env)) (*env)->ExceptionClear(env);
     if (attached) (*g_jvm)->DetachCurrentThread(g_jvm);
@@ -621,6 +660,17 @@ Java_au_com_darkside_x11server_NativeDisplayActivity_startVMNative(
 }
 
 JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
+    JNIEnv *env = NULL;
     g_jvm = vm;
+    if ((*vm)->GetEnv(vm, (void **)&env, JNI_VERSION_1_6) == JNI_OK) {
+        jclass local = (*env)->FindClass(env, "au/com/darkside/x11server/NativeDisplay");
+        if (local) {
+            g_nativeDisplayClass = (*env)->NewGlobalRef(env, local);
+            (*env)->DeleteLocalRef(env, local);
+        } else {
+            (*env)->ExceptionClear(env);
+            LOG("JNI_OnLoad: no se encontro NativeDisplay");
+        }
+    }
     return JNI_VERSION_1_6;
 }

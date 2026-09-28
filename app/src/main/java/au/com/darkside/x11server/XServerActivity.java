@@ -113,6 +113,16 @@ public class XServerActivity extends Activity {
     static final String NATIVE_DISPLAY_MARKER = ".native_display";
 
     /**
+     * Written when the image quits on purpose, read (and cleared) by the next launch.
+     *
+     * <p>This is what separates "I chose Save image and quit" from "Android killed the app
+     * while my image was running". A deliberate quit returns to the chooser — you asked to
+     * leave, so you get to pick what to open next. Anything else reopens the image you were
+     * in, which is what makes the app feel like it was never gone.
+     */
+    private static final String QUIT_MARKER = ".quit_to_chooser";
+
+    /**
      * Where the display preferences live. They used to be lost on every restart, which is
      * worse than it sounds: switching engines, loading an image and a crash-loop recovery
      * all restart the app, so anyone who set up zoom and trackpad had to set them again.
@@ -251,6 +261,9 @@ public class XServerActivity extends Activity {
         }
 
         applyStoredDisplayPreferences();
+
+        // The image quitting used to take the whole process down to the launcher.
+        NativeDisplay.setQuitSink(this::onVmQuit);
 
         // On-screen access to the options menu + soft keyboard. Phones have no
         // hardware MENU key and the ActionBar is hidden in fullscreen, so without
@@ -708,6 +721,16 @@ public class XServerActivity extends Activity {
     private synchronized void bootChosenImage() {
         if (_vmStarted) return;
         File filesDir = getFilesDir();
+
+        // Came back from a deliberate quit: offer the library instead of reopening what the
+        // user just closed. The image is still there and one tap away.
+        File quit = new File(filesDir, QUIT_MARKER);
+        if (quit.exists()) {
+            quit.delete();
+            Log.i(TAG, "last run ended in Save and quit; opening the chooser");
+            showLoadImageDialog();
+            return;
+        }
         File marker = new File(filesDir, ".custom_image");
         // Nothing chosen yet? Don't auto-boot the bundled image — show the
         // "Load image" chooser (download Squeak/Cuis, or browse the device).
@@ -827,6 +850,27 @@ public class XServerActivity extends Activity {
         } catch (IOException e) {
             Log.e(TAG, "native display: cannot extract the driver", e);
         }
+    }
+
+    /**
+     * The VM is exiting — "Save image and quit", most likely. Runs on the VM's thread in the
+     * middle of exit(), so everything here has to be synchronous; posting to the UI thread
+     * would simply never run.
+     *
+     * <p>The image has already been written by the time the VM gets here, so all that is
+     * left is to come back rather than disappear: mark the quit as deliberate and hand over
+     * to the restart trampoline, which lives in its own process and therefore outlives us.
+     */
+    private void onVmQuit() {
+        Log.i(TAG, "the image quit; returning to the chooser");
+        _vmRunning = false;
+        File filesDir = getFilesDir();
+        // A quit is not a failed boot. Without this the crash-loop guard would see the
+        // marker still set and drop the image the user just saved.
+        new File(filesDir, ".boot_pending").delete();
+        try { new File(filesDir, QUIT_MARKER).createNewFile(); }
+        catch (IOException e) { Log.w(TAG, "could not record the quit", e); }
+        restartApp(XServerActivity.class);
     }
 
     /** UI thread, both backends: what to do once the VM has (or has not) started. */
@@ -1407,30 +1451,65 @@ public class XServerActivity extends Activity {
 
     private String downloadCuisUniversity(ProgressDialog pd) throws Exception {
         setProgressMsg(pd, "Finding latest release…");
-        // Cuis University (sites.google.com/view/cuis-university) publishes per-platform
-        // bundles as GitHub releases on Cuis-University/Cuis-University. Every platform's
-        // bundle contains the same image/changes/sources plus a platform VM we ignore;
-        // we take the Windows zip (a plain zip — the macOS one carries __MACOSX
-        // resource-fork entries) and unzipBundle() keeps just the three files we need.
+        // Cuis University (sites.google.com/view/cuis-university) publishes its bundles as
+        // GitHub releases on Cuis-University/Cuis-University. /releases/latest always points
+        // at the newest one, so the only fragile part is picking the right asset out of it —
+        // and that HAS changed: the per-platform zips (windows64, macOS, …) are gone, and a
+        // release now carries a "full" bundle and a much smaller "slim" one.
+        //
+        // So: take the asset whose name says "slim", and if a future release stops using
+        // that word, fall back to the SMALLEST zip. Both rules survive a rename, which is
+        // the point — the previous code matched "windows64.zip" literally and simply broke
+        // the day that asset stopped existing.
         String json = httpGetString(
                 "https://api.github.com/repos/Cuis-University/Cuis-University/releases/latest");
-        Matcher m = Pattern.compile(
-                "\"browser_download_url\"\\s*:\\s*\"([^\"]+windows64\\.zip)\"").matcher(json);
-        if (!m.find()) throw new Exception("no windows64.zip in the latest Cuis University release");
-        String url = m.group(1);
-        // ~205 MB of zip staged in the cache, then ~60 MB of image/changes/sources
-        // extracted next to it. Check up front instead of dying half-way through.
-        requireFreeSpace(280L * 1024 * 1024, "Cuis University");
+        org.json.JSONObject release = new org.json.JSONObject(json);
+        org.json.JSONArray assets = release.optJSONArray("assets");
+        if (assets == null) throw new Exception("the latest Cuis University release lists no assets");
+
+        String url = null, assetName = null;
+        long size = 0;
+        String fallbackUrl = null, fallbackName = null;
+        long fallbackSize = Long.MAX_VALUE;
+
+        for (int i = 0; i < assets.length(); i++) {
+            org.json.JSONObject a = assets.optJSONObject(i);
+            if (a == null) continue;
+            String name = a.optString("name", "");
+            String link = a.optString("browser_download_url", "");
+            long bytes = a.optLong("size", 0);
+            if (link.isEmpty() || !name.toLowerCase().endsWith(".zip")) continue;
+            if (name.toLowerCase().contains("slim")) {
+                url = link; assetName = name; size = bytes;
+                break;
+            }
+            if (bytes > 0 && bytes < fallbackSize) {
+                fallbackUrl = link; fallbackName = name; fallbackSize = bytes;
+            }
+        }
+        if (url == null && fallbackUrl != null) {
+            url = fallbackUrl; assetName = fallbackName; size = fallbackSize;
+            Log.i(TAG, "Cuis University: no \"slim\" asset; falling back to the smallest zip");
+        }
+        if (url == null) throw new Exception("the latest Cuis University release has no .zip asset");
+        Log.i(TAG, "Cuis University " + release.optString("tag_name", "?") + ": " + assetName
+                + " (" + (size / (1024 * 1024)) + " MB) " + url);
+
+        // Space for the staged zip AND what comes out of it. Sized from what the release
+        // actually says rather than a number baked in here, which went stale once already.
+        requireFreeSpace(2 * size + 64L * 1024 * 1024, "Cuis University");
         File zip = new File(getCacheDir(), "download.zip");
         try {
-            downloadToFile(url, zip, pd, "Downloading Cuis University (~200 MB)");
-            // Unzipping this one takes ~50 s on a phone (a 45 MB image plus changes
-            // and sources come out of it), and it is indeterminate, so say so rather
-            // than leaving the user looking at a spinner that seems stuck.
+            downloadToFile(url, zip, pd, size > 0
+                    ? "Downloading Cuis University (~" + (size / (1024 * 1024)) + " MB)"
+                    : "Downloading Cuis University");
+            // Unzipping takes about a minute on a phone (a large image plus changes and
+            // sources come out of it) and is indeterminate, so say so rather than leaving
+            // the user looking at a spinner that seems stuck.
             setProgressMsg(pd, "Unzipping — this takes a minute…");
-            return unzipBundle(zip);
+            return unzipBundle(zip, "University");
         } finally {
-            // Always: a failure used to leave 205 MB parked in the cache directory.
+            // Always: a failure used to leave the whole download parked in the cache.
             zip.delete();
         }
     }
@@ -1538,8 +1617,25 @@ public class XServerActivity extends Activity {
      * sources; anything else — platform VMs etc. — is skipped). Returns the image
      * file name, which the caller records as the current image.
      */
-    private String unzipBundle(File zip) throws Exception {
-        String imageName = null;
+    private String unzipBundle(File zip) throws Exception { return unzipBundle(zip, null); }
+
+    /**
+     * Extract the image/changes/sources out of a downloaded bundle and answer which image
+     * to boot.
+     *
+     * <p>Answering "which image" is the whole difficulty. A bundle is not one image: the
+     * Cuis University slim zip carries THREE — its own 44 MB image, a stock Cuis, and a
+     * 32-bit Cuis that this VM cannot run at all. This used to answer whichever `.image`
+     * happened to come last in the zip, which silently booted the wrong one.
+     *
+     * <p>So choose deliberately: among the images that are 64-bit Spur, prefer one whose
+     * name matches {@code prefer} (the bundle's own name), and otherwise take the largest —
+     * a bundle's own image is the big one, the others are stock images shipped alongside.
+     * The 32-bit ones are deleted rather than left to clutter the library with entries that
+     * can never boot.
+     */
+    private String unzipBundle(File zip, String prefer) throws Exception {
+        java.util.List<String> images = new java.util.ArrayList<>();
         try (ZipInputStream zis = new ZipInputStream(
                 new java.io.BufferedInputStream(new java.io.FileInputStream(zip)))) {
             ZipEntry ze;
@@ -1554,7 +1650,7 @@ public class XServerActivity extends Activity {
                     continue;
                 File dst = new File(getFilesDir(), base);
                 File part = new File(dst.getPath() + ".part");
-                if (low.endsWith(".image")) imageName = base;
+                if (low.endsWith(".image")) images.add(base);
                 try (FileOutputStream out = new FileOutputStream(part)) {
                     byte[] buf = new byte[65536]; int n;
                     while ((n = zis.read(buf)) != -1) out.write(buf, 0, n);
@@ -1566,8 +1662,34 @@ public class XServerActivity extends Activity {
                 Log.i(TAG, "unzipped " + base + " -> " + dst.getName());
             }
         }
-        if (imageName == null) throw new Exception("no .image found in the downloaded zip");
-        return imageName;
+        if (images.isEmpty()) throw new Exception("no .image found in the downloaded zip");
+
+        String chosen = null;
+        long chosenSize = -1;
+        boolean chosenMatches = false;
+        for (String name : images) {
+            File f = new File(getFilesDir(), name);
+            if (is32BitSpurImage(f)) {
+                // Cannot run on this VM. Drop it, and its changes, so the image library
+                // does not offer something that only ever answers "this image is 32-bit".
+                String stem = name.substring(0, name.length() - ".image".length());
+                new File(getFilesDir(), stem + ".changes").delete();
+                if (f.delete()) Log.i(TAG, "discarded 32-bit image from the bundle: " + name);
+                continue;
+            }
+            boolean matches = prefer != null && name.toLowerCase().contains(prefer.toLowerCase());
+            long size = f.length();
+            // A name match beats size; among equals, the biggest wins.
+            if (chosen == null || (matches && !chosenMatches)
+                    || (matches == chosenMatches && size > chosenSize)) {
+                chosen = name; chosenSize = size; chosenMatches = matches;
+            }
+        }
+        if (chosen == null) throw new Exception("the bundle contains no 64-bit Spur image");
+        if (images.size() > 1)
+            Log.i(TAG, "bundle held " + images.size() + " images; booting " + chosen
+                    + " (" + (chosenSize / (1024 * 1024)) + " MB)");
+        return chosen;
     }
 
     /**

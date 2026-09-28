@@ -38,11 +38,11 @@ android {
         minSdkVersion 28
         // Google Play requires new apps/updates to target API 35 (Android 15).
         targetSdk 35
-        versionCode 46
+        versionCode 47
         // One product now: v1.46 ships the -PnativeOnly build. The flag still selects
         // what goes IN the APK, but it no longer decorates the version — an updater that
         // compares version names should not have to reason about a suffix.
-        versionName "1.46"
+        versionName "1.47"
 
         // Read by XServerActivity.useNativeDisplay().
         buildConfigField "boolean", "NATIVE_DISPLAY_ONLY", "${nativeOnly}"

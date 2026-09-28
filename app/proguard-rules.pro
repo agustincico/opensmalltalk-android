@@ -29,4 +29,5 @@
 # or dropped and the shared clipboard would fail silently (only in release).
 -keep class au.com.darkside.x11server.NativeDisplay {
     static void onImageWroteClipboard(java.lang.String);
+    static void onVmQuit();
 }

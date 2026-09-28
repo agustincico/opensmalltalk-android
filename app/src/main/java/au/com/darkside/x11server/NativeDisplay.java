@@ -76,4 +76,25 @@ public final class NativeDisplay {
         ClipboardSink sink = _sink;
         if (sink != null) sink.onImageCopied(text);
     }
+
+    /**
+     * Told when the VM is on its way out — "Save image and quit", or any other exit.
+     *
+     * <p>Called from the exiting thread, mid-{@code exit()}, so whatever it does has to
+     * happen there and then: anything posted to the UI thread loses the race and never
+     * runs. This lives here because the JNI plumbing does, but it is not specific to the
+     * native display — the exit path belongs to the VM, and both backends take it.
+     */
+    public interface QuitSink { void onVmQuit(); }
+
+    private static volatile QuitSink _quitSink;
+
+    public static void setQuitSink(QuitSink sink) { _quitSink = sink; }
+
+    /** Invoked by JNI (see nd_vm_exiting in squeak_jni.c). Keep the name in sync. */
+    @SuppressWarnings("unused")
+    static void onVmQuit() {
+        QuitSink sink = _quitSink;
+        if (sink != null) sink.onVmQuit();
+    }
 }
