@@ -21,7 +21,16 @@ with a 14-day clock on it, so get there early.
    the app signing key. Keep backing that file up — losing it means losing the ability to
    update this listing. (It is gitignored, as are its credentials in
    `app/keystore.properties`.)
-4. **Upload the bundle.** Build it with:
+4. **Upload the bundle.** Two things that cost a round trip if you do not know them:
+   - **A version code is consumed the moment a bundle is uploaded, permanently.** Deleting
+     the draft release does NOT give it back — the next upload is refused with *"version
+     code N has already been used"*. Bump `versionCode` and rebuild; the version *name* can
+     stay the same, since it is only what people read.
+   - **Native debug symbols are uploaded separately**, not with the bundle: *Test and
+     release → App bundle explorer → (the version) → Downloads → Upload native debug
+     symbols*. Build them with `scripts/make-symbols-zip.sh`.
+
+   Build it with:
    ```bash
    ./gradlew bundleRelease -PnativeOnly
    ```
