@@ -447,6 +447,24 @@ postPendingFrame(void)
 		    (uint32_t *)buf.bits + (size_t)y * buf.stride + l,
 		    r - l);
 
+  /* Whatever the Display does not cover is cleared rather than left alone.
+     Buffers come back recycled, so an uncovered strip would show a piece of some
+     earlier frame, and it would not repair itself: the next post writes the same
+     rectangle and leaves the same strip. The surface is bigger than the Display
+     whenever the two disagree about size, which is what a rotation or a zoom
+     change looks like until the image adopts the new one. Defensive — that window
+     has not been caught showing garbage, it is just too cheap not to close. */
+  if (b < buf.height || r < buf.width) {
+    int cw = buf.width - r;
+    for (y = 0; y < buf.height; ++y) {
+      uint32_t *row = (uint32_t *)buf.bits + (size_t)y * buf.stride;
+      if (y < t || y >= b)
+	memset(row, 0, (size_t)buf.width * 4);	/* whole row is outside */
+      else if (cw > 0)
+	memset(row + r, 0, (size_t)cw * 4);	/* just the right-hand strip */
+    }
+  }
+
   ANativeWindow_unlockAndPost(nativeWindow);
   lastPostMSecs = (unsigned)ioMSecs();
   pthread_mutex_unlock(&winMutex);

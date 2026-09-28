@@ -26,7 +26,7 @@ android {
     // (the sources live there); the PUBLIC identity is applicationId below.
     namespace 'au.com.darkside.x11server'
 
-    compileSdk 35
+    compileSdk 36
     ndkVersion "26.2.11394342"
 
     defaultConfig {
@@ -36,13 +36,14 @@ android {
         // say 22 while every shipped .so declared 24, so the floor was fiction --
         // now it matches the binaries. See docs/BUILDING-VM.md.
         minSdkVersion 28
-        // Google Play requires new apps/updates to target API 35 (Android 15).
-        targetSdk 35
-        versionCode 47
+        // Google Play requires new apps/updates to target API 36 (Android 16).
+        // Uploading with 35 is refused outright, as an error rather than a warning.
+        targetSdk 36
+        versionCode 48
         // One product now: v1.46 ships the -PnativeOnly build. The flag still selects
         // what goes IN the APK, but it no longer decorates the version — an updater that
         // compares version names should not have to reason about a suffix.
-        versionName "1.47"
+        versionName "1.48"
 
         // Read by XServerActivity.useNativeDisplay().
         buildConfigField "boolean", "NATIVE_DISPLAY_ONLY", "${nativeOnly}"
@@ -82,6 +83,14 @@ android {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
             signingConfig keystorePropsFile.exists() ? signingConfigs.release : null
+            // NOT `ndk { debugSymbolLevel 'FULL' }`: it produces nothing here. AGP's
+            // extractor reports every library as "already stripped", including
+            // libsqueak.so — which is wrong, the VM carries .debug_info and five more
+            // DWARF sections. Its ELF layout is rewritten by patchelf after linking
+            // (build-vm-android.sh adds NEEDED entries), and AGP's own minimal ELF
+            // reader does not recognise the result. A build setting that silently does
+            // nothing is worse than none, so the symbols are built directly instead:
+            // scripts/make-symbols-zip.sh, uploaded by hand in the Play Console.
         }
     }
 
