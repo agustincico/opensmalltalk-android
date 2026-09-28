@@ -39,7 +39,11 @@ android {
         // Google Play requires new apps/updates to target API 36 (Android 16).
         // Uploading with 35 is refused outright, as an error rather than a warning.
         targetSdk 36
-        versionCode 48
+        // 49, not 48: Play consumes a version code permanently the moment a bundle is
+        // uploaded, and deleting the draft does not give it back. The build is otherwise
+        // identical to the 1.48 published on GitHub, so the NAME stays 1.48 — the code is
+        // an internal counter, the name is what people read.
+        versionCode 49
         // One product now: v1.46 ships the -PnativeOnly build. The flag still selects
         // what goes IN the APK, but it no longer decorates the version — an updater that
         // compares version names should not have to reason about a suffix.
