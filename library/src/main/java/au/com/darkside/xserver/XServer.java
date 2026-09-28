@@ -120,7 +120,12 @@ public class XServer {
 
         _defaultFont = new Font(1, this, null, null);
         addResource(_defaultFont);
-        addResource(new Cursor(2, this, null, (Font) null, (Font) null, 0, 1, 0xff000000, 0xffffffff));
+        // Default root cursor is BLANK (maskChar 32 → transparent bitmap), not the
+        // classic X-shape (glyph 0): Smalltalk draws its own pointer into the world
+        // and the app draws its always-visible arrow, so the old X-server "X" cursor
+        // would just double up (and it showed on the empty background at startup).
+        // Client-set cursors (I-beam, resize, …) are separate resources, unaffected.
+        addResource(new Cursor(2, this, null, (Font) null, (Font) null, 0, 32, 0xff000000, 0xffffffff));
 
         _screen = new ScreenView(_context, this, 3, pixelsPerMillimeter());
 

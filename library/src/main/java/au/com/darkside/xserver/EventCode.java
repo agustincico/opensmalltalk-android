@@ -846,6 +846,32 @@ public class EventCode {
      * @param atom      The selection.
      * @throws IOException
      */
+    /**
+     * Send a ClientMessage event with 32-bit data (5 ints) — e.g. the XDND
+     * handshake messages (XdndEnter/XdndPosition/XdndDrop) the server synthesizes
+     * to drop a file onto a client window.
+     *
+     * @param client The client to write to.
+     * @param window The destination window.
+     * @param type   The message type atom (e.g. XdndEnter).
+     */
+    public static void sendClientMessage32(Client client, Window window, Atom type,
+            int d0, int d1, int d2, int d3, int d4) throws IOException {
+        InputOutput io = client.getInputOutput();
+
+        synchronized (io) {
+            writeHeader(client, ClientMessage, 32);    // detail = data format
+            io.writeInt(window.getId());    // Window.
+            io.writeInt(type.getId());    // Message type atom.
+            io.writeInt(d0);
+            io.writeInt(d1);
+            io.writeInt(d2);
+            io.writeInt(d3);
+            io.writeInt(d4);
+        }
+        io.flush();
+    }
+
     public static void sendSelectionClear(Client client, int timestamp, Window window, Atom atom) throws IOException {
         InputOutput io = client.getInputOutput();
 

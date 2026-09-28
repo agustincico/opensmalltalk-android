@@ -1,62 +1,120 @@
 apply plugin: 'com.android.application'
 
+// Build the X-server-free variant:  ./gradlew assembleRelease -PnativeOnly
+//
+// Same app, same signing key, but the embedded X server is not an option: the app
+// boots straight into vm-display-android and the "Display engine" row disappears.
+// It also stops packaging what only the X path could use — the X display driver,
+// the X-only plugins, GL, and some SDL/wayland leftovers that nothing has ever
+// loaded — which is 13 MB of the APK.
+//
+// It does NOT drop libX11/libxcb: libcairo.so.2 links against them and cairo is
+// what UnicodePlugin needs, so a genuinely X-free build has to wait for the
+// support libraries to be rebuilt from source (see docs/BUILDING-VM.md).
+def nativeOnly = project.hasProperty('nativeOnly')
+def xOnlyArtifacts = [
+        'vm-display-X11.so', 'ImmX11Plugin.so', 'XDisplayControlPlugin.so',
+        'ClipboardExtendedPlugin.so', 'B3DAcceleratorPlugin.so',
+        'libGL.so', 'libGL.so.1', 'libGLX.so.0', 'libGLdispatch.so.0',
+        'libICE.so', 'libSM.so', 'libXcursor.so', 'libXfixes.so', 'libXi.so',
+        'libXss.so', 'libSDL2-2.0.so', 'libdecor-0.so', 'libwayland-client.so',
+        'libwayland-cursor.so', 'libwayland-egl.so', 'libxkbcommon.so', 'libwm.so',
+]
+
 android {
-    compileSdkVersion 29
-    ndkVersion "22.0.7026061"
-    
+    // The R class / resources package. Kept as the fork's original Java package
+    // (the sources live there); the PUBLIC identity is applicationId below.
+    namespace 'au.com.darkside.x11server'
+
+    compileSdk 35
+    ndkVersion "26.2.11394342"
+
     defaultConfig {
-        applicationId "au.com.darkside.x11server"
-        minSdkVersion 22
-        targetSdkVersion 29
-        versionCode 31
-        versionName "1.31"
-        
+        applicationId "ar.com.opensmalltalk"
+        // The VM is cross-compiled against Bionic API 28: nl_langinfo arrived in
+        // 26 and glob()/globfree() in 28, and the plugins call both. This used to
+        // say 22 while every shipped .so declared 24, so the floor was fiction --
+        // now it matches the binaries. See docs/BUILDING-VM.md.
+        minSdkVersion 28
+        // Google Play requires new apps/updates to target API 35 (Android 15).
+        targetSdk 35
+        versionCode 46
+        // One product now: v1.46 ships the -PnativeOnly build. The flag still selects
+        // what goes IN the APK, but it no longer decorates the version — an updater that
+        // compares version names should not have to reason about a suffix.
+        versionName "1.46"
+
+        // Read by XServerActivity.useNativeDisplay().
+        buildConfigField "boolean", "NATIVE_DISPLAY_ONLY", "${nativeOnly}"
+
         ndk {
-            abiFilters 'arm64-v8a', 'armeabi-v7a', 'x86_64'
+            // arm64 only: libsqueak.so (the VM) exists for arm64-v8a alone, so an
+            // armeabi-v7a/x86_64 install could never run an image — shipping them
+            // only lets Play offer the app to devices where it cannot work.
+            abiFilters 'arm64-v8a'
         }
-        
-        // ¡ESTE BLOQUE EXTERNAL NATIVE BUILD HA SIDO ELIMINADO!
-        // externalNativeBuild {
-        //     cmake {
-        //         cppFlags "-std=c11"
-        //     }
-        // }
     }
-    
+
+    // Release signing is configured OUTSIDE the repo. Copy keystore.properties.example
+    // to app/keystore.properties (gitignored) and fill in your own keystore. Without
+    // it `assembleRelease` still builds — just unsigned — so a fresh clone works.
+    // (Credentials used to be hardcoded here, which both leaked them and made the
+    // release build impossible for anyone without that exact .jks.)
+    def keystorePropsFile = file("keystore.properties")
+    def keystoreProps = new Properties()
+    if (keystorePropsFile.exists()) {
+        keystorePropsFile.withInputStream { keystoreProps.load(it) }
+    }
+
     signingConfigs {
         release {
-            storeFile file("android-smalltalk-release.jks")
-            storePassword "AnSmalltalk"
-            keyAlias "androidSmalltalk"
-            keyPassword "AnSmalltalk"
+            if (keystorePropsFile.exists()) {
+                storeFile file(keystoreProps['storeFile'])
+                storePassword keystoreProps['storePassword']
+                keyAlias keystoreProps['keyAlias']
+                keyPassword keystoreProps['keyPassword']
+            }
         }
     }
-    
+
     buildTypes {
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-            packagingOptions {
-                doNotStrip "**/*/*.so"
-            }
-            signingConfig signingConfigs.release
+            signingConfig keystorePropsFile.exists() ? signingConfigs.release : null
         }
     }
-    
+
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_1_8
         targetCompatibility JavaVersion.VERSION_1_8
     }
-    
+
     externalNativeBuild {
         cmake {
             path file('src/main/cpp/CMakeLists.txt')
-            version "3.22.1"  // <--- ESTA LÍNEA ES LA SOLUCIÓN
+            version "3.22.1"
         }
     }
-    
-    packagingOptions {
-        pickFirst 'lib/*/libc++_shared.so'
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    // assets/plugins/ is extracted to filesDir at first run, so the X-only modules
+    // have to be kept out of the APK here rather than merely left unloaded.
+    androidResources {
+        if (nativeOnly) ignoreAssetsPatterns.addAll(xOnlyArtifacts)
+    }
+
+    packaging {
+        jniLibs {
+            if (nativeOnly) excludes.addAll(xOnlyArtifacts.collect { "**/$it" })
+            pickFirsts += ['lib/*/libc++_shared.so']
+            // The prebuilt VM/plugins must not be stripped: they are shipped as
+            // built (and stripping them here would also rewrite their ELF layout).
+            keepDebugSymbols += ['**/*.so']
+        }
     }
 }
 

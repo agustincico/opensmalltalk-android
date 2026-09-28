@@ -275,6 +275,12 @@ public class Property {
         int longLength = io.readInt();    // Long length.
         Atom property = xServer.getAtom(pid);
 
+        // Diagnostic for the synthesized file drop: seeing the VM ask for this
+        // property proves our XdndSqueakLaunchDrop ClientMessage was dispatched.
+        if (property != null && "XdndSqueakLaunchDrop".equals(property.getName()))
+            android.util.Log.i("XProperty", "GetProperty XdndSqueakLaunchDrop on window "
+                    + w.getId() + " reqType=" + tid + " present=" + properties.containsKey(pid));
+
         if (property == null) {
             ErrorCode.write(client, ErrorCode.Atom, RequestCode.GetProperty, pid);
             return;

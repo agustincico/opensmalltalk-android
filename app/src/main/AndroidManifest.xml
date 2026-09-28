@@ -1,9 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="au.com.darkside.x11server">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
+    <!-- Only for exporting fileouts to Downloads on Android 9 and older;
+         Android 10+ uses MediaStore, which needs no permission. -->
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+                     android:maxSdkVersion="28" />
 
     <uses-feature
         android:name="android.hardware.touchscreen"
@@ -17,10 +20,12 @@
         android:label="@string/app_name">
         <service
             android:name="au.com.darkside.x11server.XServerService"
+            android:exported="false"
             android:stopWithTask="false" />
 
         <activity
             android:name="au.com.darkside.x11server.XServerActivity"
+            android:exported="true"
             android:label="@string/app_name"
             android:screenOrientation="user"
             android:configChanges="mcc|mnc|locale|touchscreen|keyboard|keyboardHidden|navigation|screenLayout|fontScale|uiMode|orientation|screenSize|smallestScreenSize|layoutDirection|density"
@@ -35,8 +40,31 @@
                 <data android:scheme="x11" />
             </intent-filter>
         </activity>
+        <!-- The X11-free display path: same VM, same image, but rendered by
+             vm-display-android.so straight into a SurfaceView. Exported so it can
+             be launched with `adb shell am start` for side-by-side measurement. -->
+        <activity
+            android:name="au.com.darkside.x11server.NativeDisplayActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:screenOrientation="user"
+            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:theme="@style/Theme.MaterialComponents.Light.DarkActionBar" />
+
         <activity
             android:name="au.com.darkside.x11server.AccessControlEditor"
+            android:exported="false"
             android:label="Authorized IP addresses" />
+        <!-- Tiny trampoline that lives in its OWN process (:restart) so it can
+             kill + relaunch the main app process when switching images. See
+             RestartActivity for why the old go-HOME + AlarmManager approach
+             failed on Android 10+ (background-activity-start is blocked). -->
+        <activity
+            android:name="au.com.darkside.x11server.RestartActivity"
+            android:process=":restart"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
     </application>
 </manifest>

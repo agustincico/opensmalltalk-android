@@ -1,115 +1,123 @@
 # OpenSmalltalk Android
 
-Run any OpenSmalltalk image (Cuis, Squeak) or custom project (like [Dialogo](https://dialog.ar)) on Android — as a native APK, no Termux required.
+Run [Cuis](https://cuis.st) and [Squeak](https://squeak.org) Smalltalk — or a custom image
+like [Dialogo](https://dialog.ar) — natively on an Android phone. No Termux, no desktop:
+one APK that boots a real OpenSmalltalk VM and shows the live Smalltalk world on screen.
 
 ![Cuis University running on Samsung Galaxy A12](https://github.com/user-attachments/assets/78cb2c7f-c7a3-423a-a3c9-02b6d1e62064)
 
-## Status
+## Install
 
-Working alpha. Tested on Samsung Galaxy A12 (ARM64, Android 10) with Cuis University image.
+Download the signed APK from
+[**Releases**](https://github.com/agustincico/opensmalltalk-android/releases/latest), open
+it, and allow "install from unknown sources". Releases update each other in place (same
+signing key) — point [Obtainium](https://github.com/ImranR98/Obtainium) at this repo for
+automatic updates.
+
+Requirements: **ARM64 phone** (arm64-v8a), **Android 9+** (API 28 — the level the VM's C
+library calls need). Images must be **64-bit Spur** (32-bit images are rejected with a clear
+message instead of crashing).
+
+## What you can do
+
+- **Pick an image on first launch** — download Squeak, a recent stable Cuis, or
+  [Cuis University](https://sites.google.com/view/cuis-university), or open a `.image`
+  already on your device. Nothing is bundled; every image you load stays in an on-device
+  library and reopens offline with one tap (☰ → *Load image…*).
+- **Bring code in**: ☰ → *File in code (.st)…* picks a fileout from your device and drops
+  it into the **running** image, like desktop drag-and-drop — the image shows its own
+  "Select action" menu (browse / file in).
+- **Get code out**: *fileOut* in the image just works — no path dialogs — and the file
+  appears in **`Downloads/OpenSmalltalk/`** automatically. Same for `.pck.st` / `.cs`.
+- **Save Image** persists your session (app-private storage; it reboots into your saved
+  state). Saved-as images show up in the library too.
+- **Work with fingers**: two-finger tap or the ⊙ button = right click, an optional
+  trackpad mode (relative cursor with hover), a precise-pointer offset for small targets,
+  and a zoom picker with pixel-crisp integer scales. A soft-keyboard-aware view keeps the
+  caret visible while typing.
+
+- **Open a morph's halos**: **✦** arms the next tap as a middle-click, which is what
+  raises the Morphic halo ring (move, resize, delete, inspect, debug) — otherwise
+  unreachable, since a touchscreen has no middle button.
+
+Everything lives behind a small collapsible pill (bottom-right): **☰** options,
+**⌨** keyboard, **⊙** right-click, **✦** halos, **›** collapse. The two arming buttons
+close the pill as they arm, so the world is clear for the tap that follows. If an image
+ever renders blank, the pill is the escape hatch — ☰ → *Load image…* always works.
 
 ## How it works
 
-The app packages two components into a single APK:
+- The **OpenSmalltalk Cog VM** — the JIT, Spur 64-bit, prebuilt for ARM64 — is loaded
+  in-process via JNI and launched against the chosen image. On a real phone it runs
+  **4.3× the bytecodes and 6.7× the message sends** of the interpreter it replaced
+  (`tinyBenchmarks`, Cuis 7.7), for about 7 MB more memory.
+- **Two display engines.** The original one renders through X11 into an **embedded X server
+  written in Java** (a fork of
+  [android-xserver](https://github.com/ZhymabekRoman/android-xserver-enhanced)) that paints
+  into an Android view. The newer one, `vm-display-android`, is an ordinary OpenSmalltalk
+  display module that lets the VM draw **straight into the screen** — no X server, no socket,
+  no protocol parser, and about **5× the repaints**. Switch in ☰ → *Display engine*; both
+  offer the same options, zoom, trackpad, pointer and long-press menu.
+- The app adds the phone conveniences on top: the image library, the drag-and-drop
+  file-in (synthesized XDND), the automatic fileout export, crash-loop protection
+  against bad images, and a per-boot setup script that adapts Cuis to the phone.
 
-1. **OpenSmalltalk Stack VM** — compiled from source on Android/Termux for ARM64, loaded via JNI
-2. **X11 server** — embedded in the app (forked from [android-xserver-enhanced](https://github.com/agustincico/android-xserver-enhanced)), adapted to connect with the VM
-
-When launched, the app starts the X11 server, then launches the VM pointing to a Smalltalk image. The VM renders via X11 into an Android View.
-
-### Architecture
-```
-Android App (Java)
-├── XServerActivity            ← starts X11 server + launches VM
-├── android-xserver-enhanced   ← X11 server running in-process (library/)
-└── squeak_jni.c (JNI bridge)  ← connects Java layer to the VM
-Native (ARM64)
-├── libsqueak.so               ← OpenSmalltalk Stack VM
-├── vm-display-X11.so          ← VM display plugin
-├── *.so                       ← other external plugins
-└── ~50 dependency libs        ← resolved from Termux (glib, cairo, pango, X11, etc)
-```
-### Roadmap
-
-- **v1 (current):** VM via JNI + embedded X11 server
-- **v2 (future):** Replace X11 stack with a native Android display plugin — improving usability, eliminating dependencies and making the APK smaller and more robust
-
-## Requirements
-
-- Android 5.1+ (API 22)
-- ARM64 processor (ARMv8)
-
-## Quick start
-
-1. Download the APK from [Releases](https://github.com/agustincico/opensmalltalk-android/releases)
-2. Enable "Install from unknown sources" on your device
-3. Install and open the app — it comes pre-loaded with Cuis University image
-
-To use a different image, replace `app/src/main/assets/Cuis.image` and `.changes` with your own before building.
+Known limitations: ARM64 only; the very latest Cuis *rolling* snapshots don't start their
+UI on this VM yet (a recent upstream startup rework, already fixed upstream — the in-app
+download is pinned to the newest Cuis base that works); thin targets like window-resize
+edges remain fiddly with a finger (use Precise pointer / Trackpad mode).
 
 ## Building from source
 
-### Prerequisites
-
-- Android SDK (API 29)
-
-### Build the APK
 ```bash
 git clone https://github.com/agustincico/opensmalltalk-android
 cd opensmalltalk-android
-echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties  # adjust path to your SDK
-./gradlew assembleDebug
-# APK will be at app/build/outputs/apk/debug/app-debug.apk
+echo "sdk.dir=$HOME/Library/Android/sdk" > local.properties   # adjust to your SDK
+JAVA_HOME=/path/to/jdk-17 ./gradlew assembleDebug
 ```
 
-The repo is self-contained — both the launcher and the X11 server library are included. No submodules needed.
+There are two ways the app can put the Smalltalk world on screen, and you can build either:
 
-### Recompile the VM (optional)
-
-The compiled VM (`libsqueak.so` and external plugins) is included in the repo. If you want to recompile it from source on an Android device:
-
-1. Install Termux on your Android device
-2. Clone [opensmalltalk-vm](https://github.com/OpenSmalltalk/opensmalltalk-vm)
-3. Run the fixes script from this repo:
 ```bash
-   bash scripts/apply-fixes-stack.sh
+JAVA_HOME=/path/to/jdk-17 ./gradlew assembleRelease                # both engines
+JAVA_HOME=/path/to/jdk-17 ./gradlew assembleRelease -PnativeOnly   # no X server at all
 ```
-4. Follow the steps printed at the end of the script
 
-The script documents 8 fixes required to compile the standard Linux VM on Android/Termux.
+The default build ships both and lets you switch in ☰ → *Display engine*. `-PnativeOnly`
+boots straight into the X-server-free driver, drops the switch, and stops packaging what
+only the X path could use — about 13 MB less unpacked onto the device.
 
-## X11 server fork
+The repo is self-contained (launcher, X server library, prebuilt native VM — no
+submodules). Toolchain: **JDK 17**, AGP 8.7.3, Gradle 8.9 (wrapper included), NDK 26,
+compileSdk/targetSdk 35, arm64-v8a only. A clone builds the same APK as the official
+release; `./gradlew bundleRelease` produces the Play Store `.aab`.
 
-This project uses a modified version of [android-xserver-enhanced](https://github.com/ZhymabekRoman/android-xserver-enhanced).
-Key changes for OpenSmalltalk compatibility:
+The native VM is committed as a prebuilt, but it is **not** a mystery binary: it is built
+from a pinned upstream commit with the NDK, on your desktop — no phone or Termux install
+needed. `scripts/build-vm-android.sh` prepares everything and builds the interpreter;
+`scripts/android/build-cog-android.sh` builds the **JIT that ships**, using
+`scripts/android/cog-jit-android.patch` to make Cog's dual-mapped code zone work on
+Bionic.
 
-- **TrueColor 32bpp visual** — Squeak/Cuis VM requires Visual class 4, depth 32; any other setting causes a blank screen
-- **Public `processRequest()`** — exposed for external dispatch
-- **Dynamic resize handling** — sends `ConfigureNotify` to clients when screen size changes at runtime
+- [docs/DEV-LOOP.md](docs/DEV-LOOP.md) — the emulator dev loop (build → deploy →
+  observe → drive input), including Smalltalk text-tests wired into logcat.
+- [docs/BUILDING-VM.md](docs/BUILDING-VM.md) — the NDK cross-compile recipe, the four
+  Bionic portability patches, and what still comes from Termux.
+- [docs/NATIVE-DISPLAY.md](docs/NATIVE-DISPLAY.md) — `vm-display-android`, the display
+  driver that renders straight into a `SurfaceView` with no X server (working prototype:
+  5.5× the repaints).
+- [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) — bundled binaries and licenses.
+- [docs/NEXT-STEPS.md](docs/NEXT-STEPS.md) — where the project goes next, and why.
+- [docs/ROADMAP.md](docs/ROADMAP.md) — open bugs, subtleties, UX backlog, and the
+  Google Play path (cost + what modernization it needs).
+- [docs/UPSTREAMING.md](docs/UPSTREAMING.md) — plan for contributing the Android build
+  fixes back to the upstream OpenSmalltalk VM.
+- `CLAUDE.md` — working notes: root causes, gotchas, backlog.
 
-See: https://github.com/agustincico/android-xserver-enhanced
+## License & credits
 
-## Known limitations (v1)
-
-- Image file is bundled in the APK — no runtime image picker yet
-- File write errors may occur depending on Android storage permissions
-- App icon is placeholder (still shows X server logo)
-- Touch interaction is rough — menus are hard to tap with a finger
-- Fullscreen only applies after rotating the screen once
-
-These will be addressed in the next release of version 1.
-
-## License
-
-MIT
-
-## Author
-
-Agustin Martinez
-
-## Acknowledgements
-
-- [OpenSmalltalk VM](https://github.com/OpenSmalltalk/opensmalltalk-vm)
-- [android-xserver-enhanced](https://github.com/ZhymabekRoman/android-xserver-enhanced) by ZhymabekRoman
-- [Cuis University](https://sites.google.com/view/cuis-university/)
-- Funded by [FAST](https://www.fast.org.ar) — Fundación Argentina de Smalltalk
+MIT for the code in this repo (see [LICENSE](LICENSE)); the bundled third-party binaries
+keep their own licenses — see the notices file. Built on
+[OpenSmalltalk](https://github.com/OpenSmalltalk/opensmalltalk-vm),
+[Cuis Smalltalk](https://github.com/Cuis-Smalltalk/Cuis-Smalltalk-Dev), and Matthew
+Kwan's android-xserver. Author: [@agustincico](https://github.com/agustincico).

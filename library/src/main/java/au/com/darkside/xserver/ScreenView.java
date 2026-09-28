@@ -8,6 +8,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.Rect;
 import android.os.Build;
 import android.os.Handler;
@@ -160,6 +161,48 @@ public class ScreenView extends View {
     private final XServer _xServer;
     private final int _rootId;
     private Window _rootWindow = null;
+    private boolean _initialFullscreenApplied = false;  // force the world to fill the screen once, at startup
+
+    // Backlog #3: display zoom. The X screen (root window) is rendered at
+    // physicalSize / _displayScale, then the bitmap is scaled up to fill the
+    // View, so everything Cuis draws is _displayScale× bigger and small targets
+    // (menus, window buttons) are far easier to tap. 1.0 = off (native pixels).
+    private float _displayScale = 1.0f;  // 1.0 = native; user raises it via the Zoom menu item
+
+    /** X-screen (logical) width  = physical view width  / display scale. */
+    public int logicalWidth()  { return Math.max(1, Math.round(getWidth()  / _displayScale)); }
+    /** X-screen (logical) height = physical view height / display scale. */
+    public int logicalHeight() { return Math.max(1, Math.round(getHeight() / _displayScale)); }
+
+    public float getDisplayScale() { return _displayScale; }
+
+    /** Set the zoom factor and re-fit the world to the new logical screen size. */
+    public void setDisplayScale(float scale) {
+        if (scale < 1.0f) scale = 1.0f;
+        if (scale > 4.0f) scale = 4.0f;
+        if (scale == _displayScale) return;
+        _displayScale = scale;
+        try {
+            synchronized (_xServer) {
+                if (_rootWindow != null) {
+                    _rootWindow.resize(logicalWidth(), logicalHeight());
+                    notifyClientsScreenResize(logicalWidth(), logicalHeight());
+                }
+            }
+        } catch (Exception e) {
+            Log.e("ScreenView", "setDisplayScale error: " + e.getMessage(), e);
+        }
+        postInvalidate();
+        Log.i("ScreenView", "displayScale=" + _displayScale + " logical=" + logicalWidth() + "x" + logicalHeight());
+    }
+
+    /** Cycle the zoom in 0.25 steps, 1.0 .. 2.5, wrapping. Returns the new scale. */
+    public float cycleDisplayScale() {
+        float next = Math.round(_displayScale * 4f) / 4f + 0.25f;
+        if (next > 2.5f) next = 1.0f;
+        setDisplayScale(next);
+        return _displayScale;
+    }
     private Window _sharedClipboardWindow = null;
     private Property _sharedClipboardProperty = null;
     private Property _sharedClipboardPrimaryProperty = null;
@@ -211,6 +254,36 @@ public class ScreenView extends View {
     private PendingEventQueue<PendingKeyboardEvent> mPendingKeyboardEvents;
 
     private boolean _ignoreLongPress = false;
+    // Long-press (hold a finger down) used to pop an ActionMode menu (CTRL+C/V/…,
+    // R-Click, Keyboard). It gets in the way of Smalltalk's own press-and-hold
+    // gestures, so it's OFF by default; re-enable from the options menu.
+    private boolean _enableLongPressMenu = false;
+
+    // Precise pointer: when > 0, the X pointer sits this many physical px ABOVE the
+    // finger so the finger doesn't occlude small targets (window close box, menus).
+    private int _touchOffsetY = 0;
+    // Trackpad mode: the finger drives a *relative* cursor (laptop-trackpad style):
+    // slide = move the cursor (hover → submenus open, precise aim), quick tap = click
+    // at the cursor, press-and-hold-then-drag = drag with the button held.
+    private boolean _trackpadMode = false;
+    private float _tpLastX, _tpLastY, _tpDownX, _tpDownY;
+    private boolean _tpMoved, _tpDragging;
+    private int _touchSlop = 0;
+    private final Handler _tpHandler = new Handler(Looper.getMainLooper());
+    private Runnable _tpLongPress;
+    // Right-click: the ⊙ button arms this so the NEXT tap is a right-click (button 3),
+    // an easy way to get context menus (two-finger tap also right-clicks).
+    private boolean _armRightClick = false;
+    // Middle-click: the ✦ button arms the NEXT tap as button 2. On Unix the VM maps
+    // X button 2 to Morphic's "blue button", which is how you open a morph's halos —
+    // there is no other way to reach them from a touchscreen.
+    private boolean _armMiddleClick = false;
+    // Which button the in-flight tap pressed, so the release matches the press.
+    private int _tapButton = 1;
+    // Smooth zoom: bilinear upscale (better for image-heavy images like Dialogo, which
+    // look blocky with the default nearest-neighbour upscale). Text is crisper with
+    // nearest, so it's off by default.
+    private boolean _smoothZoom = false;
 
     private static final int ACTION_CANCEL = 0;
     private static final int ACTION_CTRL_C = 1;
@@ -250,6 +323,12 @@ public class ScreenView extends View {
         _installedColormaps = new Vector<Colormap>();
         _pixelsPerMillimeter = pixelsPerMillimeter;
         _paint = new Paint();
+
+        // Default zoom is 1.0 (native): the world shows at its real resolution,
+        // which is what responsive images (Cuis University / Dialogo) and modern
+        // HiDPI-aware images want. The user raises it via the ☰ Zoom item for
+        // fixed-size worlds that need bigger, tappable widgets.
+        _displayScale = 1.0f;
 
         mPendingPointerEvents = new PendingEventQueue<PendingPointerEvent>();
         mPendingKeyboardEvents = new PendingEventQueue<PendingKeyboardEvent>();
@@ -300,18 +379,44 @@ public class ScreenView extends View {
                         return false;
 
                     blank(false); // Reset the screen saver.
-                    updatePointerPosition((int) event.getX(), (int) event.getY(), 0);
+
+                    // Trackpad mode drives a relative cursor — handled entirely below.
+                    if (_trackpadMode) {
+                        handleTrackpadTouch(event);
+                        return false;
+                    }
+
+                    // Direct touch: map physical touch -> logical X coords (accounts for
+                    // display zoom). With "precise pointer" on, lift the pointer a bit
+                    // above the finger so it doesn't occlude the target.
+                    updatePointerPosition((int) (event.getX() / _displayScale),
+                            (int) ((event.getY() - _touchOffsetY) / _displayScale), 0);
 
                     if (_enableTouchClicks) {
-                        if (event.getActionMasked() == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0)
-                            updatePointerButtons(1, true);
-                        if (event.getActionMasked() == MotionEvent.ACTION_UP && event.getActionIndex() == 0)
+                        final int action = event.getActionMasked();
+                        // Primary finger = left button, unless a button was armed for
+                        // ONE tap: ⊙ → button 3 (context menu), ✦ → button 2 (halos).
+                        // Press and release must use the SAME button even if the arm
+                        // flag is cleared in between, or Smalltalk sees an unmatched
+                        // press and the world is left with a button stuck down.
+                        if (action == MotionEvent.ACTION_DOWN && event.getActionIndex() == 0) {
+                            _tapButton = _armRightClick ? 3 : (_armMiddleClick ? 2 : 1);
+                            updatePointerButtons(_tapButton, true);
+                        }
+                        if (action == MotionEvent.ACTION_UP && event.getActionIndex() == 0) {
+                            updatePointerButtons(_tapButton, false);
+                            _tapButton = 1;
+                            _armRightClick = false;
+                            _armMiddleClick = false;
+                        }
+                        // Two-finger tap = right-click. Drop the first finger's left
+                        // press first so Smalltalk gets a clean button-3 click (this is
+                        // why the old two-finger gesture was unreliable).
+                        if (action == MotionEvent.ACTION_POINTER_DOWN && event.getActionIndex() == 1) {
                             updatePointerButtons(1, false);
-                        if (event.getActionMasked() == MotionEvent.ACTION_POINTER_DOWN && event.getActionIndex() == 1)
                             updatePointerButtons(3, true);
-                        if ((event.getActionMasked() == MotionEvent.ACTION_POINTER_UP
-                                || event.getActionMasked() == MotionEvent.ACTION_CANCEL) && event.getActionIndex() == 1)
                             updatePointerButtons(3, false);
+                        }
                     }
                 }
 
@@ -343,6 +448,8 @@ public class ScreenView extends View {
         setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
+                if (!_enableLongPressMenu)
+                    return false;   // let Smalltalk see the press-and-hold instead
                 if (_ignoreLongPress)
                     return true;
 
@@ -354,7 +461,9 @@ public class ScreenView extends View {
                         menu.add(0, ACTION_CTRL_X, 0, "CTRL+X");
                         menu.add(0, ACTION_CTRL_A, 0, "CTRL+A");
                         menu.add(0, ACTION_ESC, 0, "ESC");
-                        menu.add(0, ACTION_R_CLICK, 0, "M-Click");
+                        // "M-Click" used to be registered under ACTION_R_CLICK, so it
+                        // fired a right-click and the button-2 branch below was dead.
+                        menu.add(0, ACTION_M_CLICK, 0, "M-Click (halos)");
                         menu.add(0, ACTION_R_CLICK, 0, "R-Click");
                         menu.add(0, ACTION_KEYBOARD, 0, "Keyboard");
                         menu.add(0, ACTION_CANCEL, 0, "Cancel");
@@ -743,9 +852,26 @@ public class ScreenView extends View {
             }
 
             _paint.reset();
+            final boolean zoom = _displayScale != 1.0f;
+            if (zoom) {
+                canvas.save();
+                canvas.scale(_displayScale, _displayScale);
+                // Smooth (bilinear) upscale for image-heavy content; nearest-neighbour
+                // (crisp, default) for text. Only matters when zoomed.
+                _paint.setFilterBitmap(_smoothZoom);
+            }
             _rootWindow.draw(canvas, _paint);
+            // cursor is in logical (X) coords; drawn inside the scaled canvas it
+            // lands under the finger at the right physical spot.
             canvas.drawBitmap(_currentCursor.getBitmap(), _currentCursorX - _currentCursor.getHotspotX(),
                     _currentCursorY - _currentCursor.getHotspotY(), null);
+            // Always-visible pointer: touch has no persistent hover, and Smalltalk
+            // often hides the X cursor (drawing its own only while moving), so the
+            // pointer would vanish. Draw a clear arrow at the last pointer position
+            // so you always see where the "mouse" is — and it stays put on lift.
+            if (_showPointer)
+                drawPointerMarker(canvas, _currentCursorX, _currentCursorY);
+            if (zoom) canvas.restore();
 
             _drawnCursor = _currentCursor;
             _drawnCursorX = _currentCursorX;
@@ -768,23 +894,34 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     
     Log.i("ScreenView", "onSizeChanged: " + oldWidth + "x" + oldHeight + " -> " + width + "x" + height);
     
+    // X-screen size is the physical view size divided by the display zoom.
+    int lw = Math.max(1, Math.round(width / _displayScale));
+    int lh = Math.max(1, Math.round(height / _displayScale));
     if (!_xServer.isStarted()) {
-        initializeXserver(width, height);
+        initializeXserver(lw, lh);
     } else if (_rootWindow != null) {
         // El servidor ya está iniciado, necesitamos redimensionar
         Log.i("ScreenView", "Redimensionando root window y notificando clientes");
-        
+
         synchronized (_xServer) {
             // Redimensionar la ventana root
-            _rootWindow.resize(width, height);
-            
+            _rootWindow.resize(lw, lh);
+
             // Notificar a todos los clientes del cambio de tamaño
-            notifyClientsScreenResize(width, height);
+            notifyClientsScreenResize(lw, lh);
         }
-        
+
         // Forzar redibujado
         postInvalidate();
     }
+
+    // Backlog #1: the world otherwise renders at its saved (smaller) size until
+    // the first device rotation. Once a client has mapped its top-level window,
+    // apply the same resize a rotation would — once — so it's fullscreen from start.
+    // (Tested NOT to be what breaks Cuis >=7983 — those images stall with the
+    // resize disabled too; their reworked startup never launches the UI process
+    // on this VM. See CLAUDE.md "Cuis master blank world".)
+    ensureInitialFullscreen();
 }
 
     protected void initializeXserver(int width, int height) {
@@ -868,25 +1005,179 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
      * @param y      New Y coordinate.
      * @param cursor The cursor to draw.
      */
-    private void movePointer(int x, int y, Cursor cursor) {
-        if (_drawnCursor != null) {
-            int left = _drawnCursorX - _drawnCursor.getHotspotX();
-            int top = _drawnCursorY - _drawnCursor.getHotspotY();
-            Bitmap bm = _drawnCursor.getBitmap();
+    private boolean _showPointer = true;
+    private Path _ptrPath = null;
+    private Paint _ptrFill = null, _ptrStroke = null;
 
-            postInvalidate(left, top, left + bm.getWidth(), top + bm.getHeight());
-            _drawnCursor = null;
+    /** Draw a classic arrow pointer (tip at x,y), always visible, over the world. */
+    private void drawPointerMarker(Canvas canvas, int x, int y) {
+        if (_ptrPath == null) {
+            // ~11x18 arrow with the tip at (0,0).
+            _ptrPath = new Path();
+            _ptrPath.moveTo(0, 0);
+            _ptrPath.lineTo(0, 17);
+            _ptrPath.lineTo(4, 13);
+            _ptrPath.lineTo(7, 20);
+            _ptrPath.lineTo(9, 19);
+            _ptrPath.lineTo(6, 12);
+            _ptrPath.lineTo(11, 12);
+            _ptrPath.close();
+            _ptrFill = new Paint(Paint.ANTI_ALIAS_FLAG);
+            _ptrFill.setStyle(Paint.Style.FILL);
+            _ptrFill.setColor(0xFF000000);
+            _ptrStroke = new Paint(Paint.ANTI_ALIAS_FLAG);
+            _ptrStroke.setStyle(Paint.Style.STROKE);
+            _ptrStroke.setStrokeWidth(1.5f);
+            _ptrStroke.setColor(0xFFFFFFFF);
         }
+        canvas.save();
+        canvas.translate(x, y);
+        canvas.drawPath(_ptrPath, _ptrFill);
+        canvas.drawPath(_ptrPath, _ptrStroke);
+        canvas.restore();
+    }
 
+    /**
+     * Toggle the always-visible mouse pointer overlay.
+     *
+     * @return new state of switch
+     */
+    public boolean toggleShowPointer() {
+        _showPointer = !_showPointer;
+        postInvalidate();
+        return _showPointer;
+    }
+
+    // State getters (used to label the curated options menu).
+    public boolean isShowPointer() { return _showPointer; }
+    public boolean isLongPressMenuEnabled() { return _enableLongPressMenu; }
+    public boolean isSharedClipboard() { return _sharedClipboard; }
+    public boolean isTrackpadMode() { return _trackpadMode; }
+    public boolean isPreciseTouch() { return _touchOffsetY != 0; }
+    public boolean isSmoothZoom() { return _smoothZoom; }
+
+    /** Arm the next tap to be a right-click (button 3) — context menus. */
+    public void armRightClick() { _armRightClick = true; _armMiddleClick = false; }
+
+    /**
+     * Arm the next tap to be a middle-click (button 2). The Unix VM maps X button 2
+     * to Morphic's blue button, so this is what opens a morph's halos — the handles
+     * for move / resize / delete / inspect / debug. Mutually exclusive with the
+     * right-click arm: two armed buttons cannot both apply to one tap.
+     */
+    public void armMiddleClick() { _armMiddleClick = true; _armRightClick = false; }
+
+    /** Toggle bilinear (smooth) vs nearest-neighbour (crisp) zoom upscaling. */
+    public boolean toggleSmoothZoom() {
+        _smoothZoom = !_smoothZoom;
+        postInvalidate();
+        return _smoothZoom;
+    }
+
+    /** Toggle trackpad mode (relative cursor). */
+    public boolean toggleTrackpadMode() {
+        _trackpadMode = !_trackpadMode;
+        _tpDragging = false; _tpMoved = false;
+        if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+        return _trackpadMode;
+    }
+
+    /** Toggle the precise-pointer offset (direct-touch mode). */
+    public boolean togglePreciseTouch() {
+        _touchOffsetY = (_touchOffsetY == 0)
+                ? Math.round(48 * getResources().getDisplayMetrics().density) : 0;
+        return _touchOffsetY != 0;
+    }
+
+    /**
+     * Trackpad-style touch: the finger drives a RELATIVE cursor (like a laptop
+     * trackpad), so you can position precisely and hover (which opens Cuis
+     * submenus) without your finger occluding the target.
+     *   • slide            → move the cursor (hover, no button)
+     *   • quick tap        → left-click at the cursor
+     *   • hold ~300ms then drag → button-1 drag (move windows, select text)
+     *   • second finger    → right-click at the cursor
+     */
+    private void handleTrackpadTouch(MotionEvent event) {
+        if (_touchSlop == 0)
+            _touchSlop = android.view.ViewConfiguration.get(getContext()).getScaledTouchSlop();
+        final float scale = _displayScale;
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                _tpDownX = _tpLastX = event.getX();
+                _tpDownY = _tpLastY = event.getY();
+                _tpMoved = false;
+                _tpDragging = false;
+                if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+                _tpLongPress = () -> {
+                    synchronized (_xServer) {
+                        if (!_tpMoved && !_tpDragging && _rootWindow != null) {
+                            _tpDragging = true;           // held still → start a button-1 drag
+                            updatePointerButtons(1, true);
+                        }
+                    }
+                };
+                _tpHandler.postDelayed(_tpLongPress, 350);
+                break;
+            case MotionEvent.ACTION_MOVE: {
+                float dx = event.getX() - _tpLastX;
+                float dy = event.getY() - _tpLastY;
+                _tpLastX = event.getX();
+                _tpLastY = event.getY();
+                int lw = Math.max(1, Math.round(getWidth() / scale));
+                int lh = Math.max(1, Math.round(getHeight() / scale));
+                int nx = Math.max(0, Math.min(lw - 1, _currentCursorX + Math.round(dx / scale)));
+                int ny = Math.max(0, Math.min(lh - 1, _currentCursorY + Math.round(dy / scale)));
+                updatePointerPosition(nx, ny, 0);
+                double dist = Math.hypot(event.getX() - _tpDownX, event.getY() - _tpDownY);
+                // Any real movement ⇒ it's a slide, not a still hold: cancel the
+                // pending hold-to-drag with a SMALL threshold so even a slow, precise
+                // slide never accidentally starts a drag (dragging = press + pause).
+                if (!_tpDragging && _tpLongPress != null
+                        && dist > 10 * getResources().getDisplayMetrics().density) {
+                    _tpHandler.removeCallbacks(_tpLongPress);
+                    _tpLongPress = null;
+                }
+                if (dist > _touchSlop) _tpMoved = true;    // for the tap-vs-slide click decision
+                break;
+            }
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+                if (_tpDragging) { updatePointerButtons(1, false); _tpDragging = false; }
+                updatePointerButtons(3, true);            // second finger → right-click
+                updatePointerButtons(3, false);
+                _tpMoved = true;                          // suppress the click on lift
+                break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_CANCEL:
+                if (_tpLongPress != null) _tpHandler.removeCallbacks(_tpLongPress);
+                if (_tpDragging) {
+                    updatePointerButtons(1, false);       // end the drag
+                    _tpDragging = false;
+                } else if (!_tpMoved) {
+                    // Quick tap → click at the cursor, honouring an armed ⊙ / ✦ the
+                    // same way direct touch does. Without this, arming a button and
+                    // then tapping in trackpad mode silently produced a plain click.
+                    int btn = _armRightClick ? 3 : (_armMiddleClick ? 2 : 1);
+                    updatePointerButtons(btn, true);
+                    updatePointerButtons(btn, false);
+                    _armRightClick = false;
+                    _armMiddleClick = false;
+                }
+                break;
+        }
+    }
+
+    private void movePointer(int x, int y, Cursor cursor) {
+        _drawnCursor = null;
         _currentCursor = cursor;
         _currentCursorX = x;
         _currentCursorY = y;
-
-        int left = x - cursor.getHotspotX();
-        int top = y - cursor.getHotspotY();
-        Bitmap bm = cursor.getBitmap();
-
-        postInvalidate(left, top, left + bm.getWidth(), top + bm.getHeight());
+        // Full invalidate: the old partial (cursor-bitmap-sized) region was in
+        // logical coords and ignored the display zoom, and it can't cover the
+        // always-visible pointer marker — a partial redraw would leave arrow
+        // trails. The world blit is cheap, so just repaint the view.
+        postInvalidate();
     }
 
     /**
@@ -1278,10 +1569,10 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
         io.writeInt(_defaultColormap.getWhitePixel()); // White pixel.
         io.writeInt(_defaultColormap.getBlackPixel()); // Black pixel.
         io.writeInt(0); // Current input masks.
-        io.writeShort((short) getWidth()); // Width in pixels.
-        io.writeShort((short) getHeight()); // Height in pixels.
-        io.writeShort((short) (getWidth() / _pixelsPerMillimeter)); // Width in millimeters.
-        io.writeShort((short) (getHeight() / _pixelsPerMillimeter)); // Height in millimeters.
+        io.writeShort((short) logicalWidth()); // Width in pixels (logical / zoomed).
+        io.writeShort((short) logicalHeight()); // Height in pixels (logical / zoomed).
+        io.writeShort((short) (logicalWidth() / _pixelsPerMillimeter)); // Width in millimeters.
+        io.writeShort((short) (logicalHeight() / _pixelsPerMillimeter)); // Height in millimeters.
         io.writeShort((short) 1); // Minimum installed maps.
         io.writeShort((short) 1); // Maximum installed maps.
         io.writeInt(vis.getId()); // Root visual ID.
@@ -1629,6 +1920,16 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     }
 
     /**
+     * Toggle the long-press ActionMode menu (CTRL+C/V/…, R-Click, Keyboard).
+     *
+     * @return new state of switch
+     */
+    public boolean toggleLongPressMenu() {
+        _enableLongPressMenu = !_enableLongPressMenu;
+        return _enableLongPressMenu;
+    }
+
+    /**
      * Process a SendEvent request.
      *
      * @param xServer   The X server.
@@ -1667,6 +1968,17 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
                 return;
             } else
                 w = (Window) r;
+        }
+
+        // Diagnostic: the VM answers our synthetic XDND messages by SendEvent-ing
+        // ClientMessages (XdndStatus/XdndFinished/XdndSqueakLaunchAck) back to the
+        // clientless source window — log them so drop handshakes are observable.
+        if (w != null && w.isServerWindow() && event[0] == EventCode.ClientMessage) {
+            int typeAtom = ((event[8] & 0xff)) | ((event[9] & 0xff) << 8)
+                    | ((event[10] & 0xff) << 16) | ((event[11] & 0xff) << 24);
+            Atom ta = _xServer.getAtom(typeAtom);
+            Log.i("ScreenView", "SendEvent to server window: ClientMessage "
+                    + (ta != null ? ta.getName() : ("atom#" + typeAtom)));
         }
 
         Vector<Client> dc = null;
@@ -2053,6 +2365,107 @@ protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight)
     /**
  * Notifica a todos los clientes que la pantalla cambió de tamaño
  */
+/**
+ * Drop a file onto the client's top-level window via a synthesized XDND
+ * handshake, exactly as a desktop drag-and-drop would: the client (the
+ * Smalltalk VM's X window, which sets XdndAware) receives XdndEnter →
+ * XdndPosition → XdndDrop from us, requests the XdndSelection contents
+ * (answered by the existing server-window selection path in Selection.java
+ * with a text/uri-list pointing at the file), and hands the image a
+ * DropFiles event — the image then decides what to do with the file.
+ *
+ * Returns false when there is no XdndAware client window or the XDND atoms
+ * aren't interned (VM built with -noxdnd) — callers should fall back to
+ * another delivery mechanism.
+ */
+public boolean dropFile(final String path) {
+    try {
+        if (_xServer == null || !_xServer.isStarted() || _rootWindow == null) return false;
+
+        final Atom aSelection = _xServer.findAtom("XdndSelection");
+        final Atom aEnter = _xServer.findAtom("XdndEnter");
+        final Atom aPosition = _xServer.findAtom("XdndPosition");
+        final Atom aDrop = _xServer.findAtom("XdndDrop");
+        final Atom aActionCopy = _xServer.findAtom("XdndActionCopy");
+        final Atom aUriList = _xServer.findAtom("text/uri-list");
+        final Atom aAware = _xServer.findAtom("XdndAware");
+        if (aSelection == null || aEnter == null || aPosition == null || aDrop == null
+                || aActionCopy == null || aUriList == null || aAware == null) {
+            Log.w("ScreenView", "dropFile: XDND atoms not interned — client has no XDND support");
+            return false;
+        }
+
+        // The drop target: a viewable client top-level that declared XdndAware.
+        Window target = null;
+        Vector<Window> children = _rootWindow.getChildren();
+        if (children != null) {
+            for (Window c : children) {
+                if (c != null && c.isViewable() && c.getClient() != null
+                        && c.getProperty(aAware.getId()) != null) {
+                    target = c;
+                    break;
+                }
+            }
+        }
+        if (target == null) {
+            Log.w("ScreenView", "dropFile: no XdndAware client window");
+            return false;
+        }
+
+        // The VM implements a Squeak-specific simplified drop for exactly this
+        // case (sqUnixXdnd.c dndInLaunchDrop, "leaves out the 8 step dance"):
+        // the absolute path goes in the XdndSqueakLaunchDrop property ON THE
+        // SOURCE window (type XA_ATOM(!), format 8, trailing NUL included) and
+        // one ClientMessage with data.l[0] = source window announces it. The VM
+        // reads the property, records the image DropFiles event itself, and
+        // acks with XdndSqueakLaunchAck (visible in our SendEvent log).
+        final Atom aLaunchDrop = _xServer.findAtom("XdndSqueakLaunchDrop");
+        if (aLaunchDrop == null) {
+            Log.w("ScreenView", "dropFile: XdndSqueakLaunchDrop not interned");
+            return false;
+        }
+        byte[] pathZ = (path + "\0").getBytes(StandardCharsets.UTF_8);
+        Property prop = _sharedClipboardWindow.getProperty(aLaunchDrop.getId());
+        if (prop == null) {
+            prop = new Property(aLaunchDrop.getId(), 4 /* XA_ATOM */, (byte) 8);
+            _sharedClipboardWindow.addProperty(prop);
+        }
+        prop.setData(pathZ);
+        prop.setType(4 /* XA_ATOM — what the VM's XGetWindowProperty insists on */);
+
+        // The image dispatches the drop AT THE POINTER POSITION (and rejects it
+        // outright when that position is outside the world). Park the pointer
+        // around the upper-middle of the screen first so the "Select action"
+        // menu is always visible. Two moves: the first may only produce
+        // Enter/Leave (window change), only the second — same window, different
+        // coords — is guaranteed to emit the MotionNotify the VM tracks.
+        try {
+            int cx = logicalWidth() / 2, cy = logicalHeight() / 3;
+            updatePointerPosition(cx, cy - 8, 0);
+            updatePointerPosition(cx, cy, 0);
+        } catch (Exception e) {
+            Log.w("ScreenView", "dropFile: could not center pointer: " + e.getMessage());
+        }
+
+        final Client client = target.getClient();
+        final Window w = target;
+        // Give the pointer motion a beat to reach the VM before the drop.
+        postDelayed(() -> {
+            try {
+                EventCode.sendClientMessage32(client, w, aLaunchDrop,
+                        _sharedClipboardWindow.getId(), 0, 0, 0, 0);
+                Log.i("ScreenView", "dropFile: XdndSqueakLaunchDrop sent for " + path);
+            } catch (Exception e) {
+                Log.e("ScreenView", "dropFile launch-drop send: " + e.getMessage(), e);
+            }
+        }, 250);
+        return true;
+    } catch (Exception e) {
+        Log.e("ScreenView", "dropFile failed: " + e.getMessage(), e);
+        return false;
+    }
+}
+
 private void notifyClientsScreenResize(int width, int height) {
     if (_rootWindow == null) return;
     
@@ -2075,5 +2488,58 @@ private void notifyClientsScreenResize(int width, int height) {
     } catch (Exception e) {
         Log.e("ScreenView", "Error notificando resize: " + e.getMessage(), e);
     }
+}
+
+/**
+ * Once, at startup: poll until a client has mapped a viewable top-level window,
+ * then (after a short settle) resize it to fill the screen — the same thing a
+ * device rotation does via notifyClientsScreenResize. Fixes "fullscreen only
+ * applies after rotating once". No-op if already applied.
+ */
+private void ensureInitialFullscreen() {
+    if (_initialFullscreenApplied) return;
+    scheduleInitialFullscreen(0);
+}
+
+private void scheduleInitialFullscreen(final int attempt) {
+    if (_initialFullscreenApplied || attempt > 80) return;  // ~80 * 250ms = 20s ceiling
+    postDelayed(new Runnable() {
+        @Override
+        public void run() {
+            if (_initialFullscreenApplied) return;
+            boolean hasClient = false;
+            try {
+                if (_xServer != null && _xServer.isStarted() && _rootWindow != null) {
+                    Vector<Window> children = _rootWindow.getChildren();
+                    if (children != null) {
+                        for (Window child : children) {
+                            if (child != null && child.isViewable()) { hasClient = true; break; }
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                Log.e("ScreenView", "scheduleInitialFullscreen check error: " + e.getMessage(), e);
+            }
+            if (hasClient) {
+                _initialFullscreenApplied = true;
+                // let the client finish its own startup layout, then force fullscreen once
+                postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        try {
+                            synchronized (_xServer) {
+                                notifyClientsScreenResize(logicalWidth(), logicalHeight());
+                            }
+                            Log.i("ScreenView", "Initial fullscreen applied (" + logicalWidth() + "x" + logicalHeight() + ")");
+                        } catch (Exception e) {
+                            Log.e("ScreenView", "Initial fullscreen apply error: " + e.getMessage(), e);
+                        }
+                    }
+                }, 800);
+            } else {
+                scheduleInitialFullscreen(attempt + 1);
+            }
+        }
+    }, 250);
 }
 }
