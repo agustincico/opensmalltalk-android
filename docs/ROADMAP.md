@@ -9,6 +9,9 @@ Last updated: 2026-08-25, **v1.45** — the shipped VM is now the **Cog JIT**
 
 ---
 
+> **Choosing what to work on next?** [`NEXT-STEPS.md`](NEXT-STEPS.md) is the short
+> version: where the next session is best spent, and why. This file is the full backlog.
+
 ## Where things are
 
 - **App identity:** `ar.com.opensmalltalk` (reverse-DNS of the planned
