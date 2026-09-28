@@ -60,9 +60,32 @@ second instance of Squeak … singleton application."* **Cuis works.**
   `dndInEnter/Position/Drop` + `dndGetSelection`. Do it behind a test; there's risk to
   the working Cuis drop.
 
-### 2. "Save Image and Quit" closes the app to the launcher — OPEN, needs a watchdog
-Quitting from the World menu (*Save Image and Quit* / *Quit without saving*) drops the
-user to the Android launcher instead of back to the **Load image** chooser.
+### 2. ~~"Save Image and Quit" closes the app to the launcher~~ — FIXED 2026-09-28
+
+The image quitting ends in `exit()`, which took the whole Android process with it — the app
+simply vanished to the launcher. An `atexit` handler registered in `squeak_jni.c` now runs
+first and hands over to the restart trampoline, which lives in its own process and so
+outlives us. It is registered in the JNI glue rather than in the display driver because the
+exit path is the VM's, and both backends take it.
+
+A quit and a kill are now told apart, which is the behaviour that was actually wanted: a
+deliberate **Save image and quit** writes `.quit_to_chooser` and comes back to the image
+chooser — you asked to leave, so you pick what opens next — while the app being killed with
+an image running still reopens that image. Verified on both display engines.
+
+Two things this needed that are worth remembering:
+
+- The handler must do its work **synchronously**. Anything posted to the UI thread loses the
+  race against `exit()` and never runs.
+- `FindClass` **cannot** be used from a thread attached with `AttachCurrentThread`: that
+  thread gets the system class loader, which knows nothing about app classes, so the lookup
+  silently fails. The class is now held as a global ref taken in `JNI_OnLoad`, which runs on
+  the thread that called `System.loadLibrary`. The clipboard callback had the same latent
+  bug and had simply never been exercised.
+
+The original report: quitting from the World menu (*Save Image and Quit* / *Quit without
+saving*) dropped the user to the Android launcher instead of back to the **Load image**
+chooser.
 
 - **Root cause (measured 2026-08-10):** the VM's quit (`Smalltalk quitPrimitive` →
   `ioExit`) terminates the process **hard** — `atexit` handlers do **not** run and
