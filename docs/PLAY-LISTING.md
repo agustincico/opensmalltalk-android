@@ -7,6 +7,53 @@ Privacy policy URL (required):
 
 ---
 
+## Submission checklist — what to do, in order
+
+Everything technical is done (16 KB alignment, targetSdk 35, arm64-only, signed bundle).
+What remains is account work in the Play Console. Do it in this order; step 6 is the one
+with a 14-day clock on it, so get there early.
+
+1. **Pay the US$25 registration fee** (once per developer account, not per app — the same
+   account can publish anything later).
+2. **Create the app.** Name *OpenSmalltalk*, package `ar.com.opensmalltalk`, free, app (not
+   game), default language English.
+3. **Play App Signing.** Upload `app/keystore.jks` as the **upload key**; Google then holds
+   the app signing key. Keep backing that file up — losing it means losing the ability to
+   update this listing. (It is gitignored, as are its credentials in
+   `app/keystore.properties`.)
+4. **Upload the bundle.** Build it with:
+   ```bash
+   ./gradlew bundleRelease -PnativeOnly
+   ```
+   → `app/build/outputs/bundle/release/app-release.aab` (v1.46 = versionCode 46).
+5. **Fill the listing** from the sections below: name, short and full description,
+   category, the Data safety answers, the content rating questionnaire, the target-audience
+   declaration and the ads declaration (none).
+   - **Privacy policy URL:**
+     `https://github.com/agustincico/opensmalltalk-android/blob/main/docs/PRIVACY.md`
+   - **Screenshots:** at least two phone screenshots. The emulator ones are fine
+     (1080×2340).
+   - **Icon:** 512×512 PNG. ⚠️ The largest icon in the repo is 192×192, so a 512 has to be
+     made — upscaling is soft, and this one is the Squeak logo, which is worth a thought
+     before putting it on a store listing under a different project's name.
+   - **Feature graphic:** 1024×500. ⚠️ Does not exist yet; the listing cannot be submitted
+     without it.
+6. **Closed testing — the long pole.** A *new personal* account must run a closed test with
+   **12 testers for 14 continuous days** before production unlocks. Two things that are
+   easy to get wrong:
+   - "Opted in" is an **account state**, not an install: a tester joins through the opt-in
+     link with the same Google account they use on their phone. They must *stay* opted in
+     for the whole 14 days — leaving the programme resets the clock.
+   - Twelve must be opted in **simultaneously**, every day of the window. Enrol more than
+     twelve.
+7. **Submit for production review** once the 14 days are up.
+
+Policy note (checked): downloading `.image` files at runtime is fine — Play forbids
+downloading executable *code*, with an explicit exception for interpreted/VM content (the
+same basis as Pydroid and the emulator apps). No `.so` is ever downloaded.
+
+---
+
 ## App name (max 30)
 
 ```
@@ -54,10 +101,10 @@ are typing above the keyboard.
 HOW IT WORKS
 
 The OpenSmalltalk virtual machine — the same one that runs Squeak and Cuis on the
-desktop — is loaded in-process and renders through an X server embedded in the app. The
-VM is built from pinned upstream sources with the Android NDK; the build recipe and the
-portability fixes are public, and the fixes have been contributed back to the
-OpenSmalltalk project.
+desktop — is loaded in-process, with the Cog JIT, and draws straight into the screen
+through a display driver written for Android. The VM is built from pinned upstream sources
+with the Android NDK; the build recipe and the portability fixes are public, and the fixes
+have been contributed back to the OpenSmalltalk project.
 
 OPEN SOURCE
 
