@@ -459,6 +459,20 @@ Java_au_com_darkside_x11server_XServerActivity_startVMNative(
     err_append("Cargando libsqueak.so...\n");
     void *vm_handle = dlopen(lib, RTLD_NOW | RTLD_GLOBAL);
     if (!vm_handle) {
+        // The absolute path only exists when the installer EXTRACTED the libraries.
+        // Play can serve them uncompressed and mapped straight out of the APK, and then
+        // nativeLibraryDir holds no such file. Asking for it by SONAME works either way:
+        // the linker resolves it in this app's namespace, inside the APK if that is where
+        // it lives. (The packaging is also configured to extract -- this is the belt to
+        // that pair of braces, because the failure mode is a total one.)
+        LOG("dlopen por ruta fallo (%s); reintentando por nombre", dlerror());
+        vm_handle = dlopen("libsqueak.so", RTLD_NOW | RTLD_GLOBAL);
+        if (vm_handle) {
+            err_append("Cargada por SONAME (librerias no extraidas).\n");
+            LOG("libsqueak.so cargada por SONAME");
+        }
+    }
+    if (!vm_handle) {
         // Previously this branch was EMPTY: we carried on with a NULL handle,
         // dlsym(NULL,...) returned NULL, and calling it crashed with SIGSEGV —
         // a hard crash instead of a diagnosable "the VM could not be loaded".

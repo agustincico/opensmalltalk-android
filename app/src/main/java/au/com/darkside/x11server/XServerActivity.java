@@ -889,12 +889,18 @@ public class XServerActivity extends Activity {
         Log.i(TAG, "startVMNative() retornó: " + res);
 
         if (res != 0) {
-            // The native side could not load the VM / find its entry point.
-            // Without this the screen just stayed black with no explanation.
+            // -1 = the VM library would not load, -2 = it loaded but has no entry point.
+            // NEITHER is the image's fault, and saying "pick another" sent someone
+            // through every image in the list while the real cause was that Play had
+            // shipped the native libraries unextracted. Say which failure it was.
             Log.e(TAG, "VM no pudo iniciar (" + res + "): " + getLastError());
             bootPending.delete();
             _vmStarted = false;   // let the chooser's pick try again
-            showLoadImageDialog("The VM could not start with that image. Pick another.");
+            showLoadImageDialog(res == -1 || res == -2
+                    ? "The Smalltalk VM itself could not be loaded, so no image will open."
+                      + " This is a problem with the app, not with your images — please"
+                      + " report it."
+                    : "The VM could not start with that image. Pick another.");
             return;
         }
         _vmRunning = true;

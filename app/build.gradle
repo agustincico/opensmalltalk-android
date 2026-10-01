@@ -39,15 +39,13 @@ android {
         // Google Play requires new apps/updates to target API 36 (Android 16).
         // Uploading with 35 is refused outright, as an error rather than a warning.
         targetSdk 36
-        // 49, not 48: Play consumes a version code permanently the moment a bundle is
-        // uploaded, and deleting the draft does not give it back. The build is otherwise
-        // identical to the 1.48 published on GitHub, so the NAME stays 1.48 — the code is
-        // an internal counter, the name is what people read.
-        versionCode 49
+        // Play consumes a version code permanently on upload, so each attempt needs a
+        // fresh one: 48 was the GitHub release, 49 the first Play upload, 50 this fix.
+        versionCode 50
         // One product now: v1.46 ships the -PnativeOnly build. The flag still selects
         // what goes IN the APK, but it no longer decorates the version — an updater that
         // compares version names should not have to reason about a suffix.
-        versionName "1.48"
+        versionName "1.49"
 
         // Read by XServerActivity.useNativeDisplay().
         buildConfigField "boolean", "NATIVE_DISPLAY_ONLY", "${nativeOnly}"
@@ -122,6 +120,17 @@ android {
 
     packaging {
         jniLibs {
+            // Play serves whatever the bundle asks for, and without this AGP asks for
+            // UNCOMPRESSED native libraries — which also means NOT EXTRACTED: the .so
+            // files stay mapped inside the APK and never appear in nativeLibraryDir. The
+            // app dlopen()s libsqueak.so by absolute path from that directory, so every
+            // Play install failed to start the VM and blamed the image for it. The APK
+            // built here was fine, because an APK honours android:extractNativeLibs.
+            //
+            // Gradle had been warning about exactly this mismatch on every build:
+            // "useLegacyPackaging should be set to true because android:extractNativeLibs
+            // is set to true in AndroidManifest.xml".
+            useLegacyPackaging = true
             if (nativeOnly) excludes.addAll(xOnlyArtifacts.collect { "**/$it" })
             pickFirsts += ['lib/*/libc++_shared.so']
             // The prebuilt VM/plugins must not be stripped: they are shipped as

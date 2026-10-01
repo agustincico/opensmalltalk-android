@@ -455,6 +455,36 @@ Non-issues (benign, ignore): `pthread_setschedparam failed: Operation not
 permitted` (VM can't get realtime prio; falls back to itimer) and
 `Xlib: extension "RANDR" missing` (the embedded X server has no RANDR).
 
+## The bundle can ship the app a layout it cannot run (2026-10-01)
+
+Every image failed on the **Play build only**, with *"The VM could not start with that
+image. Pick another."* — a message that sent the maintainer through every image in the
+list. The images were never involved.
+
+`BundleConfig.pb` inside the `.aab` carried
+`optimizations.uncompress_native_libraries.enabled = true`, which is AGP's default when
+`packaging.jniLibs.useLegacyPackaging` is unset. It tells Play to serve the native
+libraries **uncompressed, which also means NOT EXTRACTED**: they stay mapped inside the
+APK and `nativeLibraryDir` holds no such file. `squeak_jni.c` opens the VM with
+`dlopen(nativeLibraryDir + "/libsqueak.so")` — an absolute path to a file that does not
+exist there — so the load failed and every boot after it.
+
+The APK built here was unaffected: an APK honours `android:extractNativeLibs="true"`, so
+local testing could never reproduce it. **Gradle had been printing the exact mismatch on
+every single build** and it was read as noise:
+
+> PackagingOptions.jniLibs.useLegacyPackaging should be set to true because
+> android:extractNativeLibs is set to "true" in AndroidManifest.xml
+
+Three things changed: `useLegacyPackaging = true` (the bundle now asks Play to extract);
+a fallback to `dlopen("libsqueak.so")` by SONAME, which resolves under either packaging;
+and the error message now distinguishes "the VM would not load" (res -1/-2, an app bug)
+from "this image failed".
+
+**Verify a bundle before uploading** by decoding that field — `unzip -p app.aab
+BundleConfig.pb` and look for `uncompress_native_libraries`; `enabled` absent means false,
+which is what this app needs.
+
 ## Reproducibility
 
 Third parties must be able to rebuild everything, **including the VM from the
